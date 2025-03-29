@@ -40,6 +40,16 @@ namespace TransformCacher
         private string _customFilename = "";
         private bool _useGlbFormat = false;
         
+        // TransformIdBaker UI
+        private bool _showBakerWindow = false;
+        private Rect _bakerWindowRect = new Rect(400, 200, 500, 500);
+        private Vector2 _bakerScrollPosition;
+        private Vector2 _sceneScrollPosition;
+        private string _ignorePrefix = "Weapon spawn";
+        private List<string> _scenesToBake = new List<string>();
+        private bool _bakeMultipleScenes = false;
+        private bool _showBakerSettings = false;
+        
         // Window resizing
         private Rect _resizeHandle = new Rect(0, 0, 10, 10);
         private bool _isResizing = false;
@@ -63,7 +73,7 @@ namespace TransformCacher
         
         public void OnGUI()
         {
-            if (TransformCacher.EnableDebugGUI == null || !TransformCacher.EnableDebugGUI.Value)
+            if (TransformCacherPlugin.EnableDebugGUI == null || !TransformCacherPlugin.EnableDebugGUI.Value)
                 return;
                 
             try
@@ -85,6 +95,12 @@ namespace TransformCacher
                 if (_showExportWindow)
                 {
                     _exportWindowRect = GUILayout.Window(2, _exportWindowRect, DrawExportWindow, "Export Objects");
+                }
+                
+                // Baker window from TransformIdBaker
+                if (_showBakerWindow && _idBaker != null)
+                {
+                    _bakerWindowRect = GUI.Window(100, _bakerWindowRect, DrawBakerWindow, "Transform ID Baker");
                 }
                 
                 // Quick export button when export window is not shown
@@ -148,12 +164,12 @@ namespace TransformCacher
                 {
                     Scene currentScene = SceneManager.GetActiveScene();
                     _transformCacher.ResetTransformApplicationAttempts();
-                    _transformCacher.ApplyTransformsWithRetry(currentScene);
+                    _transformCacher.StartCoroutine(_transformCacher.ApplyTransformsWithRetry(currentScene));
                 }
                 
                 if (_idBaker != null && GUILayout.Button("Open ID Baker", GUILayout.Height(30)))
                 {
-                    _idBaker.ToggleBakerWindow();
+                    _showBakerWindow = !_showBakerWindow;
                 }
                 
                 GUILayout.Space(20);
@@ -162,11 +178,11 @@ namespace TransformCacher
                 GUILayout.Label("Information", GUI.skin.box);
                 
                 // Add null checks for all config entries
-                GUILayout.Label($"Save Hotkey: {(TransformCacher.SaveHotkey != null ? TransformCacher.SaveHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Tag Hotkey: {(TransformCacher.TagHotkey != null ? TransformCacher.TagHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Destroy Hotkey: {(TransformCacher.DestroyHotkey != null ? TransformCacher.DestroyHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Spawn Hotkey: {(TransformCacher.SpawnHotkey != null ? TransformCacher.SpawnHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Mouse Toggle Hotkey: {(TransformCacher.MouseToggleHotkey != null ? TransformCacher.MouseToggleHotkey.Value.ToString() : "N/A")}");
+                GUILayout.Label($"Save Hotkey: {(TransformCacherPlugin.SaveHotkey != null ? TransformCacherPlugin.SaveHotkey.Value.ToString() : "N/A")}");
+                GUILayout.Label($"Tag Hotkey: {(TransformCacherPlugin.TagHotkey != null ? TransformCacherPlugin.TagHotkey.Value.ToString() : "N/A")}");
+                GUILayout.Label($"Destroy Hotkey: {(TransformCacherPlugin.DestroyHotkey != null ? TransformCacherPlugin.DestroyHotkey.Value.ToString() : "N/A")}");
+                GUILayout.Label($"Spawn Hotkey: {(TransformCacherPlugin.SpawnHotkey != null ? TransformCacherPlugin.SpawnHotkey.Value.ToString() : "N/A")}");
+                GUILayout.Label($"Mouse Toggle Hotkey: {(TransformCacherPlugin.MouseToggleHotkey != null ? TransformCacherPlugin.MouseToggleHotkey.Value.ToString() : "N/A")}");
                 GUILayout.Label($"Current Scene: {_transformCacher.GetCurrentScene() ?? "Unknown"}");
                 GUILayout.Label($"Mouse Focus: {(_transformCacher.IsUIFocused() ? "UI" : "Game")}");
                 
@@ -175,9 +191,9 @@ namespace TransformCacher
                 GameObject currentInspectedObjectInfo = _transformCacher.GetCurrentInspectedObject();
                 if (currentInspectedObjectInfo != null)
                 {
-                    string uniqueId = TransformCacher.GenerateUniqueId(currentInspectedObjectInfo.transform);
-                    string pathId = TransformCacher.GeneratePathID(currentInspectedObjectInfo.transform);
-                    string itemId = TransformCacher.GenerateItemID(currentInspectedObjectInfo.transform);
+                    string uniqueId = FixUtility.GenerateUniqueId(currentInspectedObjectInfo.transform);
+                    string pathId = FixUtility.GeneratePathID(currentInspectedObjectInfo.transform);
+                    string itemId = FixUtility.GenerateItemID(currentInspectedObjectInfo.transform);
                     
                     GUILayout.Label($"Selected: {currentInspectedObjectInfo.name}");
                     GUILayout.Label($"UniqueId: {uniqueId}");
@@ -474,6 +490,160 @@ namespace TransformCacher
             GUI.DragWindow();
         }
         
+        // Baker window code integrated from TransformIdBaker
+        private void DrawBakerWindow(int id)
+        {
+            GUILayout.BeginVertical();
+            
+            // Scene information
+            Scene currentScene = SceneManager.GetActiveScene();
+            GUILayout.Label($"Current Scene: {currentScene.name}");
+            
+            bool isSceneBaked = _idBaker.IsSceneBaked(currentScene);
+            string bakeStatus = isSceneBaked 
+                ? "<color=green>Baked</color>"
+                : "<color=yellow>Not Baked</color>";
+                
+            // Get the number of baked objects if available
+            if (isSceneBaked)
+            {
+                var sceneBakedIds = _databaseManager.GetBakedIdsDatabase();
+                int count = sceneBakedIds[currentScene.name].Count;
+                bakeStatus += $" ({count} objects)";
+            }
+            
+            GUILayout.Label($"Bake Status: {bakeStatus}", new GUIStyle(GUI.skin.label) { richText = true });
+            
+            GUILayout.Space(10);
+            
+            // Settings section
+            _showBakerSettings = GUILayout.Toggle(_showBakerSettings, "Show Settings");
+            
+            if (_showBakerSettings)
+            {
+                GUILayout.BeginVertical(GUI.skin.box);
+                
+                // Ignore prefix setting
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Ignore Prefix:", GUILayout.Width(100));
+                _ignorePrefix = GUILayout.TextField(_ignorePrefix, GUILayout.Width(150));
+                GUILayout.EndHorizontal();
+                
+                GUILayout.Label("Objects with names starting with this prefix will be ignored during baking.", 
+                    EditorStyles.miniLabel);
+                
+                // Multiple scenes toggle
+                _bakeMultipleScenes = GUILayout.Toggle(_bakeMultipleScenes, "Bake Multiple Scenes");
+                
+                if (_bakeMultipleScenes)
+                {
+                    GUILayout.Space(5);
+                    GUILayout.Label("Scenes to Bake:");
+                    
+                    _sceneScrollPosition = GUILayout.BeginScrollView(_sceneScrollPosition, GUILayout.Height(100));
+                    
+                    // List all loaded scenes
+                    for (int i = 0; i < SceneManager.sceneCount; i++)
+                    {
+                        Scene scene = SceneManager.GetSceneAt(i);
+                        bool isSelected = _scenesToBake.Contains(scene.name);
+                        
+                        bool newIsSelected = GUILayout.Toggle(isSelected, scene.name);
+                        
+                        if (newIsSelected != isSelected)
+                        {
+                            if (newIsSelected)
+                            {
+                                _scenesToBake.Add(scene.name);
+                            }
+                            else
+                            {
+                                _scenesToBake.Remove(scene.name);
+                            }
+                        }
+                    }
+                    
+                    GUILayout.EndScrollView();
+                    
+                    // Add unloaded scene option
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("Add Scene:", GUILayout.Width(70));
+                    string newScene = GUILayout.TextField("", GUILayout.Width(120));
+                    
+                    if (GUILayout.Button("Add", GUILayout.Width(50)) && !string.IsNullOrEmpty(newScene))
+                    {
+                        if (!_scenesToBake.Contains(newScene))
+                        {
+                            _scenesToBake.Add(newScene);
+                        }
+                    }
+                    
+                    GUILayout.EndHorizontal();
+                    
+                    if (_scenesToBake.Count == 0)
+                    {
+                        GUILayout.Label("<color=yellow>No scenes selected</color>", 
+                            new GUIStyle(GUI.skin.label) { richText = true });
+                    }
+                }
+                
+                GUILayout.EndVertical();
+            }
+            
+            GUILayout.Space(10);
+            
+            // Baking controls
+            GUI.enabled = !_idBaker.IsBaking();
+            if (GUILayout.Button("Bake Scene(s)", GUILayout.Height(40)))
+            {
+                _idBaker.StartBaking();
+            }
+            GUI.enabled = true;
+            
+            // Baking progress
+            if (_idBaker.IsBaking())
+            {
+                GUILayout.Space(10);
+                GUILayout.Label(_idBaker.GetBakingStatus());
+                
+                Rect progressRect = GUILayoutUtility.GetRect(100, 20);
+                EditorGUI.ProgressBar(progressRect, _idBaker.GetBakingProgress(), 
+                    $"{Mathf.RoundToInt(_idBaker.GetBakingProgress() * 100)}%");
+            }
+            
+            GUILayout.Space(10);
+            
+            // Database statistics
+            GUILayout.Label("Database Statistics", GUI.skin.box);
+            
+            _bakerScrollPosition = GUILayout.BeginScrollView(_bakerScrollPosition);
+            
+            // Get baked IDs database from database manager
+            var currentBakedIdsDb = _databaseManager.GetBakedIdsDatabase();
+            
+            // Show scenes with baked IDs
+            foreach (var scene in currentBakedIdsDb.Keys)
+            {
+                int count = currentBakedIdsDb[scene].Count;
+                GUILayout.Label($"Scene '{scene}': {count} objects");
+            }
+            
+            GUILayout.EndScrollView();
+            
+            GUILayout.Space(10);
+            
+            // Close button
+            if (GUILayout.Button("Close"))
+            {
+                _showBakerWindow = false;
+            }
+            
+            GUILayout.EndVertical();
+            
+            // Allow the window to be dragged
+            GUI.DragWindow();
+        }
+        
         private HashSet<GameObject> GetObjectsToExport()
         {
             var result = new HashSet<GameObject>();
@@ -540,23 +710,45 @@ namespace TransformCacher
                         glbField.SetValue(null, _useGlbFormat);
                     }
                     
-                    // Get the output directory
-                    var outputDirField = Type.GetType("TarkinItemExporter.Plugin")?.GetField("OutputDir");
-                    string outputDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Exported Models");
+                    // Get default output directory
+                    string outputDir = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
                     
-                    if (outputDirField != null && outputDirField.GetValue(null) != null)
+                    // Try to get configured output directory
+                    var pluginType = Type.GetType("TarkinItemExporter.Plugin");
+                    if (pluginType != null)
                     {
-                        outputDir = outputDirField.GetValue(null).ToString();
+                        var outputDirField = pluginType.GetField("OutputDir");
+                        if (outputDirField != null)
+                        {
+                            var configEntry = outputDirField.GetValue(null);
+                            if (configEntry != null)
+                            {
+                                // Try to get Value property from ConfigEntry
+                                var valueProperty = configEntry.GetType().GetProperty("Value");
+                                if (valueProperty != null)
+                                {
+                                    var value = valueProperty.GetValue(configEntry);
+                                    if (value != null)
+                                    {
+                                        outputDir = value.ToString();
+                                    }
+                                }
+                            }
+                        }
                     }
                     
+                    // Create directory if it doesn't exist
+                    Directory.CreateDirectory(outputDir);
+                    
                     // Call the export method
-                    var exportMethod = tarkinExporter.GetMethod("Export", new[] { typeof(HashSet<GameObject>), typeof(string), typeof(string) });
+                    var exportMethod = tarkinExporter.GetMethod("Export", new[] { 
+                        typeof(HashSet<GameObject>), typeof(string), typeof(string) 
+                    });
+                    
                     if (exportMethod != null)
                     {
                         exportMethod.Invoke(null, new object[] { selectedObjects, outputDir, filename });
                         Logger.LogInfo($"Export initiated to {Path.Combine(outputDir, filename)}");
-                        
-                        // Show notification
                         _showExportWindow = false;
                     }
                     else
@@ -594,10 +786,34 @@ namespace TransformCacher
                 GUI.Label(rect, text, centeredStyle);
             }
         }
+        
+        // Additional helper for Editor styles
+        private static class EditorStyles
+        {
+            public static GUIStyle miniLabel
+            {
+                get
+                {
+                    GUIStyle style = new GUIStyle(GUI.skin.label);
+                    style.fontSize = style.fontSize - 2;
+                    return style;
+                }
+            }
+            
+            public static GUIStyle boldLabel
+            {
+                get
+                {
+                    GUIStyle style = new GUIStyle(GUI.skin.label);
+                    style.fontStyle = FontStyle.Bold;
+                    return style;
+                }
+            }
+        }
     }
     
     /// <summary>
-    /// Static utility class to fix ambiguous method calls
+    /// Static utility class for transform operations
     /// </summary>
     public static class FixUtility
     {
@@ -633,6 +849,70 @@ namespace TransformCacher
             }
             
             return string.Join("/", path.ToArray());
+        }
+        
+        // Generate a PathID for a transform
+        public static string GeneratePathID(Transform transform)
+        {
+            if (transform == null) return string.Empty;
+            
+            // Get object path
+            string objectPath = GetFullPath(transform);
+            
+            // Create a hash code from the path for shorter ID
+            int hashCode = objectPath.GetHashCode();
+            
+            // Return a path ID that's "P" prefix + absolute hash code
+            return "P" + Math.Abs(hashCode).ToString();
+        }
+        
+        // Generate an ItemID for a transform
+        public static string GenerateItemID(Transform transform)
+        {
+            if (transform == null) return string.Empty;
+            
+            // Use name + scene + sibling index as a unique identifier
+            string name = transform.name;
+            string scene = transform.gameObject.scene.name;
+            int siblingIndex = transform.GetSiblingIndex();
+            
+            string idSource = $"{name}_{scene}_{siblingIndex}";
+            int hashCode = idSource.GetHashCode();
+            
+            // Return an item ID that's "I" prefix + absolute hash code
+            return "I" + Math.Abs(hashCode).ToString();
+        }
+        
+        // Generate a unique ID for a transform that persists across game sessions
+        public static string GenerateUniqueId(Transform transform)
+        {
+            if (transform == null) return string.Empty;
+            
+            // Get PathID and ItemID for this transform
+            string pathId = GeneratePathID(transform);
+            string itemId = GenerateItemID(transform);
+            
+            // Combine for the new format
+            if (!string.IsNullOrEmpty(pathId) && !string.IsNullOrEmpty(itemId))
+            {
+                return pathId + "+" + itemId;
+            }
+            
+            // Fall back to old format if generation failed
+            string sceneName = transform.gameObject.scene.name;
+            string hierarchyPath = GetFullPath(transform);
+            
+            // Add position to make IDs more unique
+            // Round to 2 decimal places to avoid floating point precision issues
+            string positionStr = string.Format(
+                "pos_x{0:F2}y{1:F2}z{2:F2}",
+                Math.Round(transform.position.x, 2),
+                Math.Round(transform.position.y, 2),
+                Math.Round(transform.position.z, 2)
+            );
+            
+            // Simple, stable ID based on scene, path and position
+            return $"{sceneName}_{hierarchyPath}_{positionStr}";
         }
     }
 }
