@@ -11,7 +11,7 @@ using UnityEngine.SceneManagement;
 
 namespace TransformCacher
 {
-    public class TransformCacherTag : MonoBehaviour
+    public partial class TransformCacherTag : MonoBehaviour
     {
         public string UniqueId { get; private set; }
         public string PathID { get; set; }
@@ -40,7 +40,7 @@ namespace TransformCacher
         }
     }
 
-    public class TransformCacher : MonoBehaviour
+    public partial class TransformCacher : MonoBehaviour
     {
         private static TransformCacher _instance;
         public static TransformCacher Instance => _instance;
@@ -83,9 +83,6 @@ namespace TransformCacher
         
         // Prefab selection
         private List<GameObject> _availablePrefabs = new List<GameObject>();
-        private string _prefabSearchText = "";
-        private Vector2 _prefabScrollPosition;
-        private bool _showPrefabSelector = false;
         private bool _prefabsLoaded = false;
         private GameObject _selectedPrefab = null;
 
@@ -93,21 +90,10 @@ namespace TransformCacher
         private Dictionary<string, List<GameObject>> _prefabCategories = new Dictionary<string, List<GameObject>>();
         private List<string> _categoryNames = new List<string>();
         private string _selectedCategory = "All";
-        private bool _showCategoryDropdown = false;
-        private Vector2 _categoryScrollPosition;
-        
-        // UI State
-        private Rect _windowRect = new Rect(400, 100, 600, 500);
-        private Vector2 _mainWindowScrollPosition;
 
         // New UI resizing and focus features
         private bool _uiHasFocus = false;
         private Vector3 _savedMousePosition;
-        private Rect _resizeHandle = new Rect(0, 0, 10, 10);
-        private bool _isResizing = false;
-        private Vector2 _minWindowSize = new Vector2(400, 300);
-        private Vector2 _startResizeSize;
-        private Vector2 _startResizeMousePos;
 
         // Configuration options
         public static ConfigEntry<bool> EnablePersistence;
@@ -175,7 +161,7 @@ namespace TransformCacher
             Logger.LogInfo("TransformCacher initialized successfully");
         }
 
-        private IEnumerator LoadPrefabs()
+        internal IEnumerator LoadPrefabs()
         {
             yield return new WaitForSeconds(5f); // Wait for game to fully load
             
@@ -356,7 +342,6 @@ namespace TransformCacher
 
         private bool ShouldAddAsPrefab(GameObject obj)
         {
-            // Same implementation as before
             if (obj == null) return false;
             
             try
@@ -407,7 +392,7 @@ namespace TransformCacher
                     objName.Contains("gun");
                     
                 // If path has "props/" in it, it's likely a good candidate
-                string path = GetFullPath(obj.transform);
+                string path = FixUtility.GetFullPath(obj.transform);
                 if (path.Contains("/props/") || path.Contains("props/"))
                 {
                     isGoodCandidate = true;
@@ -475,11 +460,10 @@ namespace TransformCacher
 
         private string CategorizeObject(GameObject obj)
         {
-            // Same implementation as before
             if (obj == null) return "Misc";
             
             string objName = obj.name.ToLower();
-            string path = GetFullPath(obj.transform).ToLower();
+            string path = FixUtility.GetFullPath(obj.transform).ToLower();
             
             // Try to categorize based on name or path patterns
             if (objName.Contains("door") || path.Contains("door"))
@@ -534,7 +518,6 @@ namespace TransformCacher
 
         private void InitializeCategories()
         {
-            // Same implementation as before
             // Add default categories
             string[] categories = new string[]
             {
@@ -559,7 +542,6 @@ namespace TransformCacher
 
         private void AddPrimitives()
         {
-            // Same implementation as before
             Logger.LogInfo("No suitable prefabs found, adding primitives as fallback");
             
             try
@@ -579,7 +561,6 @@ namespace TransformCacher
 
         private void AddPrimitive(PrimitiveType type, string name, string category)
         {
-            // Same implementation as before
             var primitive = GameObject.CreatePrimitive(type);
             primitive.name = name;
             primitive.SetActive(false);
@@ -620,7 +601,6 @@ namespace TransformCacher
 
         private void SetupUnityExplorerReflection()
         {
-            // Same implementation as before
             try
             {
                 // Try to find UnityExplorer assembly
@@ -690,7 +670,6 @@ namespace TransformCacher
 
         private void CheckForInspectedObject()
         {
-            // Same implementation as before
             if (_activeInspectorProperty == null) return;
             
             try
@@ -815,11 +794,7 @@ namespace TransformCacher
                 
                 if (SpawnHotkey != null && SpawnHotkey.Value.IsDown())
                 {
-                    _showPrefabSelector = !_showPrefabSelector;
-                    if (_showPrefabSelector && !_prefabsLoaded)
-                    {
-                        StartCoroutine(LoadPrefabs());
-                    }
+                    // This is now handled by TransformCacherGUI
                 }
                 
                 // Periodically check for inspected object changes
@@ -871,7 +846,6 @@ namespace TransformCacher
         // Toggle mouse focus between UI and game
         private void ToggleMouseFocus()
         {
-            // Same implementation as before
             try 
             {
                 _uiHasFocus = !_uiHasFocus;
@@ -885,10 +859,6 @@ namespace TransformCacher
                     // Enable cursor for UI interaction
                     Cursor.visible = true;
                     Cursor.lockState = CursorLockMode.None;
-                    
-                    // Center cursor on main window
-                    Vector2 screenCenter = new Vector2(_windowRect.x + _windowRect.width / 2, _windowRect.y + _windowRect.height / 2);
-                    SetMousePosition(screenCenter);
                     
                     Logger.LogInfo("Mouse focus switched to UI");
                 }
@@ -916,7 +886,6 @@ namespace TransformCacher
         // Helper method to set mouse position
         private void SetMousePosition(Vector2 position)
         {
-            // Same implementation as before
             // Some games require different methods to set cursor position
             // Try standard Unity method first
             try
@@ -934,7 +903,6 @@ namespace TransformCacher
         // Mouse utility class
         private static class Mouse
         {
-            // Same implementation as before
             public static void SetPosition(Vector2 position)
             {
                 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
@@ -973,7 +941,7 @@ namespace TransformCacher
                 tag.ItemID = GenerateItemID(obj.transform);
                 
                 string uniqueId = GenerateUniqueId(obj.transform);
-                Logger.LogInfo($"Tagged object: {GetFullPath(obj.transform)} with ID: {uniqueId}, PathID: {tag.PathID}, ItemID: {tag.ItemID}");
+                Logger.LogInfo($"Tagged object: {FixUtility.GetFullPath(obj.transform)} with ID: {uniqueId}, PathID: {tag.PathID}, ItemID: {tag.ItemID}");
             }
             else
             {
@@ -995,7 +963,7 @@ namespace TransformCacher
             try
             {
                 string sceneName = obj.scene.name;
-                string objectPath = GetFullPath(obj.transform);
+                string objectPath = FixUtility.GetFullPath(obj.transform);
                 string uniqueId = GenerateUniqueId(obj.transform);
                 
                 Logger.LogInfo($"Marking for destruction: {objectPath} with ID: {uniqueId}");
@@ -1050,7 +1018,7 @@ namespace TransformCacher
                         Position = obj.transform.position,
                         Rotation = obj.transform.eulerAngles,
                         Scale = obj.transform.localScale,
-                        ParentPath = obj.transform.parent != null ? GetFullPath(obj.transform.parent) : "",
+                        ParentPath = obj.transform.parent != null ? FixUtility.GetFullPath(obj.transform.parent) : "",
                         IsDestroyed = true,
                         IsSpawned = false,
                         PrefabPath = "",
@@ -1094,7 +1062,7 @@ namespace TransformCacher
             {
                 try
                 {
-                    string childPath = GetFullPath(child);
+                    string childPath = FixUtility.GetFullPath(child);
                     string childUniqueId = GenerateUniqueId(child);
                     
                     // Add to destroyed objects cache
@@ -1131,7 +1099,7 @@ namespace TransformCacher
                             Position = child.position,
                             Rotation = child.eulerAngles,
                             Scale = child.localScale,
-                            ParentPath = GetFullPath(child.parent),
+                            ParentPath = FixUtility.GetFullPath(child.parent),
                             IsDestroyed = true,
                             IsSpawned = false,
                             PrefabPath = "",
@@ -1234,9 +1202,6 @@ namespace TransformCacher
                 _lastRotation = spawnedObj.transform.rotation;
                 _lastScale = spawnedObj.transform.localScale;
                 
-                // Hide the prefab selector
-                _showPrefabSelector = false;
-                
                 Logger.LogInfo($"Spawned object: {spawnedObj.name} at {spawnPos}");
             }
             catch (Exception ex)
@@ -1277,7 +1242,7 @@ namespace TransformCacher
             
             // Fall back to old format if generation failed
             string sceneName = transform.gameObject.scene.name;
-            string hierarchyPath = GetFullPath(transform);
+            string hierarchyPath = FixUtility.GetFullPath(transform);
             
             // Add position to make IDs more unique
             // Round to 2 decimal places to avoid floating point precision issues
@@ -1298,7 +1263,7 @@ namespace TransformCacher
             if (transform == null) return string.Empty;
             
             // Get object path
-            string objectPath = GetFullPath(transform);
+            string objectPath = FixUtility.GetFullPath(transform);
             
             // Create a hash code from the path for shorter ID
             int hashCode = objectPath.GetHashCode();
@@ -1322,23 +1287,6 @@ namespace TransformCacher
             
             // Return an item ID that's "I" prefix + absolute hash code
             return "I" + Math.Abs(hashCode).ToString();
-        }
-
-        // Get the path of sibling indices, which is more stable than names
-        private static string GetSiblingIndicesPath(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            var indices = new Stack<int>();
-            
-            Transform current = transform;
-            while (current != null)
-            {
-                indices.Push(current.GetSiblingIndex());
-                current = current.parent;
-            }
-            
-            return string.Join(".", indices.ToArray());
         }
 
         // Save all tagged objects
@@ -1387,13 +1335,13 @@ namespace TransformCacher
                     UniqueId = uniqueId,
                     PathID = tag.PathID,
                     ItemID = tag.ItemID,
-                    ObjectPath = GetFullPath(tr),
+                    ObjectPath = FixUtility.GetFullPath(tr),
                     ObjectName = tr.name,
                     SceneName = sceneName,
                     Position = tr.position,
                     Rotation = tr.eulerAngles,
                     Scale = tr.localScale,
-                    ParentPath = tr.parent != null ? GetFullPath(tr.parent) : "",
+                    ParentPath = tr.parent != null ? FixUtility.GetFullPath(tr.parent) : "",
                     IsDestroyed = tag.IsDestroyed,
                     IsSpawned = tag.IsSpawned,
                     Children = GetChildrenIds(tr)
@@ -1478,13 +1426,13 @@ namespace TransformCacher
                     UniqueId = uniqueId,
                     PathID = pathId,
                     ItemID = itemId,
-                    ObjectPath = GetFullPath(transform),
+                    ObjectPath = FixUtility.GetFullPath(transform),
                     ObjectName = obj.name,
                     SceneName = sceneName,
                     Position = transform.position,
                     Rotation = transform.eulerAngles,
                     Scale = transform.localScale,
-                    ParentPath = transform.parent != null ? GetFullPath(transform.parent) : "",
+                    ParentPath = transform.parent != null ? FixUtility.GetFullPath(transform.parent) : "",
                     IsDestroyed = isDestroyed,
                     IsSpawned = isSpawned,
                     PrefabPath = prefabPath,
@@ -1552,13 +1500,13 @@ namespace TransformCacher
                         UniqueId = childUniqueId,
                         PathID = childPathId,
                         ItemID = childItemId,
-                        ObjectPath = GetFullPath(child),
+                        ObjectPath = FixUtility.GetFullPath(child),
                         ObjectName = childObj.name,
                         SceneName = sceneName,
                         Position = child.position,
                         Rotation = child.eulerAngles,
                         Scale = child.localScale,
-                        ParentPath = GetFullPath(child.parent),
+                        ParentPath = FixUtility.GetFullPath(child.parent),
                         IsDestroyed = childIsDestroyed,
                         IsSpawned = childIsSpawned,
                         PrefabPath = childPrefabPath,
@@ -1580,23 +1528,6 @@ namespace TransformCacher
             }
         }
 
-        // Get full path of transform
-        public static string GetFullPath(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            var path = new Stack<string>();
-            
-            var current = transform;
-            while (current != null)
-            {
-                path.Push(current.name);
-                current = current.parent;
-            }
-            
-            return string.Join("/", path.ToArray());
-        }
-
         // Apply saved transforms to objects in the scene - enhanced with retry logic
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
@@ -1616,7 +1547,7 @@ namespace TransformCacher
             StartCoroutine(ApplyTransformsWithRetry(scene));
         }
 
-        private IEnumerator ApplyTransformsWithRetry(Scene scene)
+        internal IEnumerator ApplyTransformsWithRetry(Scene scene)
         {
             // Wait for scene to properly initialize
             float initialDelay = TransformDelay != null ? TransformDelay.Value : 1.0f;
@@ -1863,7 +1794,7 @@ namespace TransformCacher
                 try
                 {
                     // By path
-                    string path = GetFullPath(obj.transform);
+                    string path = FixUtility.GetFullPath(obj.transform);
                     objectsByPath[path] = obj;
                     
                     // By name
@@ -1873,7 +1804,7 @@ namespace TransformCacher
                     objectsByName[name].Add(obj);
                     
                     // By sibling path
-                    string siblingPath = GetSiblingIndicesPath(obj.transform);
+                    string siblingPath = FixUtility.GetSiblingIndicesPath(obj.transform);
                     objectsBySiblingPath[siblingPath] = obj;
                     
                     // By path ID and item ID
@@ -1966,7 +1897,7 @@ namespace TransformCacher
                         // Try to match by parent path
                         foreach (var obj in nameMatches)
                         {
-                            if (obj.transform.parent != null && GetFullPath(obj.transform.parent) == data.ParentPath)
+                            if (obj.transform.parent != null && FixUtility.GetFullPath(obj.transform.parent) == data.ParentPath)
                             {
                                 targetObj = obj;
                                 matchMethod = "parent_path";
@@ -2165,332 +2096,6 @@ namespace TransformCacher
                 Logger.LogError($"Error in FindObjectByPath: {ex.Message}");
                 return null;
             }
-        }
-
-        // Debug GUI
-        private void OnGUI()
-        {
-            if (!EnableDebugGUI.Value) return;
-            
-            // Main window
-            _windowRect = GUI.Window(0, _windowRect, DrawMainWindow, "Transform Cacher");
-            
-            // Prefab selector window
-            if (_showPrefabSelector)
-            {
-                Rect selectorRect = new Rect(_windowRect.x + _windowRect.width + 10, _windowRect.y, 500, 500);
-                GUI.Window(1, selectorRect, DrawPrefabSelector, "Prefab Selector");
-            }
-        }
-        
-        private void DrawMainWindow(int id)
-        {
-            try
-            {
-                // Begin scrollable area - adjust if resizing
-                _mainWindowScrollPosition = GUILayout.BeginScrollView(_mainWindowScrollPosition);
-                
-                GUILayout.Label("Object Actions", GUI.skin.box);
-                
-                // Tagging and saving
-                if (GUILayout.Button("Save All Tagged Objects", GUILayout.Height(30)))
-                {
-                    SaveAllTaggedObjects();
-                }
-
-                if (GUILayout.Button("Tag Inspected Object", GUILayout.Height(30)))
-                {
-                    if (_currentInspectedObject != null)
-                        TagObject(_currentInspectedObject);
-                    else
-                        Logger.LogInfo("No object currently inspected");
-                }
-                
-                if (GUILayout.Button("Destroy Inspected Object", GUILayout.Height(30)))
-                {
-                    if (_currentInspectedObject != null)
-                        MarkForDestruction(_currentInspectedObject);
-                    else
-                        Logger.LogInfo("No object currently inspected");
-                }
-                
-                if (GUILayout.Button("Open Prefab Selector", GUILayout.Height(30)))
-                {
-                    _showPrefabSelector = !_showPrefabSelector;
-                    if (_showPrefabSelector && !_prefabsLoaded)
-                    {
-                        StartCoroutine(LoadPrefabs());
-                    }
-                }
-                
-                if (GUILayout.Button("Force Apply Transforms", GUILayout.Height(30)))
-                {
-                    Scene currentScene = SceneManager.GetActiveScene();
-                    _transformApplicationAttempts = 0;
-                    StartCoroutine(ApplyTransformsWithRetry(currentScene));
-                }
-                
-                if (_idBaker != null && GUILayout.Button("Open ID Baker", GUILayout.Height(30)))
-                {
-                    _idBaker.ToggleBakerWindow();
-                }
-                
-                GUILayout.Space(20);
-                
-                // Information section
-                GUILayout.Label("Information", GUI.skin.box);
-                
-                // Add null checks for all config entries
-                GUILayout.Label($"Save Hotkey: {(SaveHotkey != null ? SaveHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Tag Hotkey: {(TagHotkey != null ? TagHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Destroy Hotkey: {(DestroyHotkey != null ? DestroyHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Spawn Hotkey: {(SpawnHotkey != null ? SpawnHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Mouse Toggle Hotkey: {(MouseToggleHotkey != null ? MouseToggleHotkey.Value.ToString() : "N/A")}");
-                GUILayout.Label($"Current Scene: {_currentScene ?? "Unknown"}");
-                GUILayout.Label($"Mouse Focus: {(_uiHasFocus ? "UI" : "Game")}");
-                
-                GUILayout.Space(10);
-                
-                if (_currentInspectedObject != null)
-                {
-                    string uniqueId = GenerateUniqueId(_currentInspectedObject.transform);
-                    string pathId = GeneratePathID(_currentInspectedObject.transform);
-                    string itemId = GenerateItemID(_currentInspectedObject.transform);
-                    
-                    GUILayout.Label($"Selected: {_currentInspectedObject.name}");
-                    GUILayout.Label($"UniqueId: {uniqueId}");
-                    GUILayout.Label($"PathID: {pathId}");
-                    GUILayout.Label($"ItemID: {itemId}");
-                    
-                    // Display its transform
-                    GUILayout.Label($"Position: {_currentInspectedObject.transform.position}");
-                    GUILayout.Label($"Rotation: {_currentInspectedObject.transform.eulerAngles}");
-                    GUILayout.Label($"Scale: {_currentInspectedObject.transform.localScale}");
-                    
-                    // Check if it's tagged
-                    TransformCacherTag tag = _currentInspectedObject.GetComponent<TransformCacherTag>();
-                    if (tag != null)
-                    {
-                        GUILayout.Label($"Tagged: YES");
-                        GUILayout.Label($"Is Destroyed: {tag.IsDestroyed}");
-                        GUILayout.Label($"Is Spawned: {tag.IsSpawned}");
-                    }
-                    else
-                    {
-                        GUILayout.Label($"Tagged: NO");
-                    }
-                }
-                else
-                {
-                    GUILayout.Label("No object currently selected");
-                }
-                
-                GUILayout.Space(20);
-                
-                // Database stats
-                GUILayout.Label("Database Statistics", GUI.skin.box);
-                
-                // Get the transforms database
-                var transformsDb = _databaseManager.GetTransformsDatabase();
-                
-                int totalObjects = 0;
-                int totalDestroyed = 0;
-                int totalSpawned = 0;
-                
-                if (transformsDb != null)
-                {
-                    foreach (var scene in transformsDb.Keys)
-                    {
-                        if (transformsDb[scene] != null)
-                        {
-                            int objectCount = transformsDb[scene].Count;
-                            int destroyedCount = transformsDb[scene].Values.Count(data => data != null && data.IsDestroyed);
-                            int spawnedCount = transformsDb[scene].Values.Count(data => data != null && data.IsSpawned);
-                            
-                            GUILayout.Label($"Scene '{scene}': {objectCount} objects ({destroyedCount} destroyed, {spawnedCount} spawned)");
-                            
-                            totalObjects += objectCount;
-                            totalDestroyed += destroyedCount;
-                            totalSpawned += spawnedCount;
-                        }
-                    }
-                }
-                
-                GUILayout.Label($"Total: {totalObjects} objects ({totalDestroyed} destroyed, {totalSpawned} spawned)");
-                
-                GUILayout.EndScrollView();
-                
-                // Draw resize handle in the bottom-right corner
-                _resizeHandle = new Rect(_windowRect.width - 15, _windowRect.height - 15, 15, 15);
-                GUI.Box(_resizeHandle, "↘");
-                
-                // Allow the window to be dragged (but only from the top bar)
-                GUI.DragWindow(new Rect(0, 0, _windowRect.width, 20));
-                
-                // Handle resize
-                HandleResizing();
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Error in DrawMainWindow: {ex.Message}\n{ex.StackTrace}");
-            }
-        }
-        
-        // Add this method for window resizing
-        private void HandleResizing()
-        {
-            var currentEvent = Event.current;
-            
-            switch (currentEvent.type)
-            {
-                case EventType.MouseDown:
-                    if (_resizeHandle.Contains(currentEvent.mousePosition))
-                    {
-                        _isResizing = true;
-                        _startResizeSize = new Vector2(_windowRect.width, _windowRect.height);
-                        _startResizeMousePos = currentEvent.mousePosition;
-                        currentEvent.Use();
-                    }
-                    break;
-                    
-                case EventType.MouseUp:
-                    _isResizing = false;
-                    break;
-                    
-                case EventType.MouseDrag:
-                    if (_isResizing)
-                    {
-                        // Calculate new size based on mouse movement
-                        Vector2 difference = currentEvent.mousePosition - _startResizeMousePos;
-                        _windowRect.width = Mathf.Max(_minWindowSize.x, _startResizeSize.x + difference.x);
-                        _windowRect.height = Mathf.Max(_minWindowSize.y, _startResizeSize.y + difference.y);
-                        currentEvent.Use();
-                    }
-                    break;
-            }
-        }
-        
-        private void DrawPrefabSelector(int id)
-        {
-            // Same implementation as before
-            GUILayout.BeginVertical();
-            
-            // Search field
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Search:", GUILayout.Width(60));
-            _prefabSearchText = GUILayout.TextField(_prefabSearchText, GUILayout.Width(300));
-            if (GUILayout.Button("Clear", GUILayout.Width(60)))
-            {
-                _prefabSearchText = "";
-            }
-            GUILayout.EndHorizontal();
-            
-            // Loading indicator
-            if (!_prefabsLoaded)
-            {
-                GUILayout.Box("Loading prefabs, please wait...");
-            }
-            else
-            {
-                // Category selector
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Category:", GUILayout.Width(60));
-                
-                if (GUILayout.Button(_selectedCategory, GUILayout.Width(150)))
-                {
-                    // Toggle dropdown
-                    _showCategoryDropdown = !_showCategoryDropdown;
-                }
-                
-                GUILayout.EndHorizontal();
-                
-                // Category dropdown
-                if (_showCategoryDropdown)
-                {
-                    Rect dropdownRect = GUILayoutUtility.GetLastRect();
-                    dropdownRect.y += dropdownRect.height;
-                    dropdownRect.width = 210;
-                    dropdownRect.height = Mathf.Min(_categoryNames.Count * 25, 200);
-                    
-                    GUILayout.BeginArea(dropdownRect, GUI.skin.box);
-                    _categoryScrollPosition = GUILayout.BeginScrollView(_categoryScrollPosition, GUILayout.Height(dropdownRect.height - 10));
-                    
-                    foreach (var category in _categoryNames)
-                    {
-                        int count = _prefabCategories[category].Count;
-                        if (GUILayout.Button($"{category} ({count})"))
-                        {
-                            _selectedCategory = category;
-                            _showCategoryDropdown = false;
-                        }
-                    }
-                    
-                    GUILayout.EndScrollView();
-                    GUILayout.EndArea();
-                }
-                
-                // Get filtered prefabs
-                List<GameObject> filteredPrefabs;
-                
-                if (!_prefabCategories.ContainsKey(_selectedCategory))
-                {
-                    _selectedCategory = "All";
-                }
-                
-                if (string.IsNullOrEmpty(_prefabSearchText))
-                {
-                    // Just filter by category
-                    filteredPrefabs = _prefabCategories[_selectedCategory];
-                }
-                else
-                {
-                    // Filter by search and category
-                    filteredPrefabs = _prefabCategories[_selectedCategory]
-                        .Where(p => p != null && p.name.IndexOf(_prefabSearchText, StringComparison.OrdinalIgnoreCase) >= 0)
-                        .ToList();
-                }
-                
-                GUILayout.Label($"Found {filteredPrefabs.Count} prefabs in '{_selectedCategory}'{(!string.IsNullOrEmpty(_prefabSearchText) ? $" matching '{_prefabSearchText}'" : "")}");
-                
-                // Scrollable list
-                _prefabScrollPosition = GUILayout.BeginScrollView(_prefabScrollPosition, GUILayout.Height(350));
-                
-                foreach (var prefab in filteredPrefabs)
-                {
-                    if (prefab == null) continue;
-                    
-                    bool isSelected = _selectedPrefab == prefab;
-                    GUI.color = isSelected ? Color.green : Color.white;
-                    
-                    if (GUILayout.Button(prefab.name, GUILayout.Height(30)))
-                    {
-                        _selectedPrefab = prefab;
-                    }
-                    
-                    GUI.color = Color.white;
-                }
-                
-                GUILayout.EndScrollView();
-                
-                // Spawn button
-                GUI.enabled = _selectedPrefab != null;
-                if (GUILayout.Button("Spawn Selected Object", GUILayout.Height(40)))
-                {
-                    SpawnObject(_selectedPrefab);
-                }
-                GUI.enabled = true;
-                
-                // Close button
-                if (GUILayout.Button("Close", GUILayout.Height(30)))
-                {
-                    _showPrefabSelector = false;
-                }
-            }
-            
-            GUILayout.EndVertical();
-            
-            // Allow the window to be dragged
-            GUI.DragWindow();
         }
     }
 }
