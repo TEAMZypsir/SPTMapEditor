@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using UnityEngine;
 
@@ -191,4 +192,138 @@ namespace TransformCacher
     }
 
     #endregion
+}
+namespace TransformCacher
+{
+    [BepInPlugin("com.transformcacher.plugin", "TransformCacher", "1.0.0")]
+    public class TransformCacherPlugin : BaseUnityPlugin
+    {
+        // Configuration entries
+        public static ConfigEntry<bool> EnablePersistence;
+        public static ConfigEntry<bool> EnableDebugGUI;
+        public static ConfigEntry<bool> EnableObjectHighlight;
+        public static ConfigEntry<KeyboardShortcut> SaveHotkey;
+        public static ConfigEntry<KeyboardShortcut> TagHotkey;
+        public static ConfigEntry<KeyboardShortcut> DestroyHotkey;
+        public static ConfigEntry<KeyboardShortcut> SpawnHotkey;
+        public static ConfigEntry<KeyboardShortcut> MouseToggleHotkey;
+        public static ConfigEntry<float> TransformDelay;
+        public static ConfigEntry<int> MaxRetries;
+
+        // Logging
+        public static BepInEx.Logging.ManualLogSource Log;
+
+        private void Awake()
+        {
+            // Set up logging
+            Log = Logger;
+            Log.LogInfo("TransformCacher is starting...");
+
+            // Initialize configuration
+            InitializeConfiguration();
+
+            try
+            {
+                // Initialize components
+                GameObject managerObject = new GameObject("TransformCacherManager");
+                DontDestroyOnLoad(managerObject);
+
+                // Initialize DatabaseManager first as it's needed by other components
+                DatabaseManager databaseManager = DatabaseManager.Instance;
+                if (databaseManager == null)
+                {
+                    Log.LogError("Failed to get database manager instance");
+                }
+                else
+                {
+                    databaseManager.Initialize();
+                    Log.LogInfo("DatabaseManager initialized");
+                }
+
+                // Add main controller components
+                var transformCacher = managerObject.AddComponent<TransformCacher>();
+                
+                // Add TransformIdBaker
+                var idBaker = managerObject.AddComponent<TransformIdBaker>();
+                if (idBaker != null)
+                {
+                    idBaker.Initialize();
+                    Log.LogInfo("TransformIdBaker initialized");
+                }
+
+                // Add GUI last since it depends on other components
+                var gui = managerObject.AddComponent<TransformCacherGUI>();
+                if (gui != null && transformCacher != null && databaseManager != null)
+                {
+                    gui.Initialize(transformCacher, databaseManager, idBaker);
+                    Log.LogInfo("GUI initialized");
+                }
+                
+                // Try to add optional components based on consolidated files
+                try
+                {
+                    var bundleLoader = managerObject.AddComponent<BundleLoader>();
+                    if (bundleLoader != null)
+                    {
+                        bundleLoader.Initialize();
+                        Log.LogInfo("BundleLoader initialized");
+                    }
+                    
+                    var exporterManager = managerObject.AddComponent<ExporterManager>();
+                    if (exporterManager != null)
+                    {
+                        Log.LogInfo("ExporterManager initialized");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.LogWarning($"Failed to initialize optional components: {ex.Message}");
+                }
+
+                Log.LogInfo("TransformCacher initialized successfully");
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"Error during initialization: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        private void InitializeConfiguration()
+        {
+            // Plugin settings
+            EnablePersistence = Config.Bind("General", "EnablePersistence", true, 
+                "Enable persistence of object transforms across game sessions");
+            
+            EnableDebugGUI = Config.Bind("General", "EnableDebugGUI", true, 
+                "Enable debug GUI for transform management");
+            
+            EnableObjectHighlight = Config.Bind("General", "EnableObjectHighlight", true, 
+                "Enable highlighting of selected objects");
+
+            // Hotkeys
+            SaveHotkey = Config.Bind("Hotkeys", "SaveHotkey", new KeyboardShortcut(KeyCode.F9), 
+                "Hotkey to save all tagged objects");
+            
+            TagHotkey = Config.Bind("Hotkeys", "TagHotkey", new KeyboardShortcut(KeyCode.F10), 
+                "Hotkey to tag the currently inspected object");
+            
+            DestroyHotkey = Config.Bind("Hotkeys", "DestroyHotkey", new KeyboardShortcut(KeyCode.Delete), 
+                "Hotkey to mark the currently inspected object for destruction");
+            
+            SpawnHotkey = Config.Bind("Hotkeys", "SpawnHotkey", new KeyboardShortcut(KeyCode.F8), 
+                "Hotkey to open the prefab selector");
+            
+            MouseToggleHotkey = Config.Bind("Hotkeys", "MouseToggleHotkey", new KeyboardShortcut(KeyCode.Tab, KeyCode.LeftAlt), 
+                "Hotkey to toggle between mouse UI control and game control");
+
+            // Advanced settings
+            TransformDelay = Config.Bind("Advanced", "TransformDelay", 2.0f, 
+                "Delay in seconds before applying transforms after scene load");
+            
+            MaxRetries = Config.Bind("Advanced", "MaxRetries", 3, 
+                "Maximum number of retry attempts for applying transforms");
+
+            Log.LogInfo("Configuration initialized");
+        }
+    }
 }
