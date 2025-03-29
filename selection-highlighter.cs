@@ -99,29 +99,6 @@ namespace TransformCacher
             _renderers.Add(renderer);
         }
         
-        private Bounds CalculateObjectBounds()
-        {
-            Bounds bounds = new Bounds(Vector3.zero, Vector3.one);
-            Renderer[] renderers = GetComponentsInChildren<Renderer>();
-            
-            if (renderers.Length > 0)
-            {
-                bounds = renderers[0].bounds;
-                for (int i = 1; i < renderers.Length; i++)
-                {
-                    bounds.Encapsulate(renderers[i].bounds);
-                }
-            }
-            
-            return bounds;
-        }
-        
-        private Mesh CreateSphereMesh()
-        {
-            // Create a simple sphere mesh for visualization
-            return Resources.GetBuiltinResource<Mesh>("Sphere.fbx");
-        }
-        
         private Material CreateHighlightMaterial(Material baseMaterial)
         {
             // Create a new material based on the original

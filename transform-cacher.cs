@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using BepInEx;
-using BepInEx.Configuration;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -23,17 +22,17 @@ namespace TransformCacher
         public void Awake()
         {
             // Generate a unique ID based on hierarchical path and other properties
-            UniqueId = TransformCacher.GenerateUniqueId(transform);
+            UniqueId = FixUtility.GenerateUniqueId(transform);
             
             // Generate PathID and ItemID if they don't already exist
             if (string.IsNullOrEmpty(PathID))
             {
-                PathID = TransformCacher.GeneratePathID(transform);
+                PathID = FixUtility.GeneratePathID(transform);
             }
             
             if (string.IsNullOrEmpty(ItemID))
             {
-                ItemID = TransformCacher.GenerateItemID(transform);
+                ItemID = FixUtility.GenerateItemID(transform);
             }
             
             Debug.Log($"[TransformCacher] Tag active on: {gameObject.name} with ID: {UniqueId}, PathID: {PathID}, ItemID: {ItemID}");
@@ -95,17 +94,8 @@ namespace TransformCacher
         private bool _uiHasFocus = false;
         private Vector3 _savedMousePosition;
 
-        // Configuration options
-        public static ConfigEntry<bool> EnablePersistence;
-        public static ConfigEntry<bool> EnableDebugGUI;
-        public static ConfigEntry<bool> EnableObjectHighlight;
-        public static ConfigEntry<KeyboardShortcut> SaveHotkey;
-        public static ConfigEntry<KeyboardShortcut> TagHotkey;
-        public static ConfigEntry<KeyboardShortcut> DestroyHotkey;
-        public static ConfigEntry<KeyboardShortcut> SpawnHotkey;
-        public static ConfigEntry<KeyboardShortcut> MouseToggleHotkey;
-        public static ConfigEntry<float> TransformDelay;
-        public static ConfigEntry<int> MaxRetries;
+        // GUI reference
+        private TransformCacherGUI _gui;
         
         // Logging
         private static BepInEx.Logging.ManualLogSource Logger;
@@ -124,18 +114,6 @@ namespace TransformCacher
             // Get logger from plugin
             Logger = BepInEx.Logging.Logger.CreateLogSource("TransformCacher");
 
-            // Add MouseToggleHotkey if it doesn't exist
-            if (MouseToggleHotkey == null)
-            {
-                var bepinPlugin = GetComponentInParent<TransformCacherPlugin>();
-                if (bepinPlugin != null)
-                {
-                    MouseToggleHotkey = bepinPlugin.Config.Bind("Hotkeys", "MouseToggle", 
-                        new KeyboardShortcut(KeyCode.Tab, KeyCode.LeftAlt),
-                        "Hotkey to toggle between mouse UI control and game control");
-                }
-            }
-
             // Initialize database manager
             _databaseManager = DatabaseManager.Instance;
             _databaseManager.Initialize();
@@ -143,6 +121,10 @@ namespace TransformCacher
             // Initialize ID Baker
             _idBaker = gameObject.AddComponent<TransformIdBaker>();
             _idBaker.Initialize();
+            
+            // Initialize GUI
+            _gui = gameObject.AddComponent<TransformCacherGUI>();
+            _gui.Initialize(this, _databaseManager, _idBaker);
             
             Logger.LogInfo("DatabaseManager initialized");
             
@@ -159,6 +141,58 @@ namespace TransformCacher
             StartCoroutine(LoadPrefabs());
             
             Logger.LogInfo("TransformCacher initialized successfully");
+        }
+
+        // Public methods for GUI access
+        public GameObject GetCurrentInspectedObject() => _currentInspectedObject;
+        public bool ArePrefabsLoaded() => _prefabsLoaded;
+        public bool IsUIFocused() => _uiHasFocus;
+        public string GetCurrentScene() => _currentScene;
+        public void ResetTransformApplicationAttempts() => _transformApplicationAttempts = 0;
+        
+        public List<string> GetCategoryNames() => _categoryNames;
+        
+        public int GetPrefabCountForCategory(string category)
+        {
+            if (_prefabCategories.ContainsKey(category))
+                return _prefabCategories[category].Count;
+            return 0;
+        }
+        
+        public void SetSelectedCategory(string category)
+        {
+            _selectedCategory = category;
+        }
+        
+        public List<GameObject> GetFilteredPrefabs(string searchText)
+        {
+            if (!_prefabsLoaded || _prefabCategories == null)
+                return new List<GameObject>();
+                
+            // Get prefabs from the selected category
+            List<GameObject> categoryPrefabs = new List<GameObject>();
+            if (_prefabCategories.ContainsKey(_selectedCategory))
+            {
+                categoryPrefabs = _prefabCategories[_selectedCategory];
+            }
+            else if (_prefabCategories.ContainsKey("All"))
+            {
+                categoryPrefabs = _prefabCategories["All"];
+            }
+            else
+            {
+                categoryPrefabs = _availablePrefabs;
+            }
+            
+            // If no search text, return all from category
+            if (string.IsNullOrWhiteSpace(searchText))
+                return categoryPrefabs;
+                
+            // Filter by search text
+            return categoryPrefabs.Where(p => 
+                p != null && 
+                p.name.IndexOf(searchText, StringComparison.OrdinalIgnoreCase) >= 0
+            ).ToList();
         }
 
         internal IEnumerator LoadPrefabs()
@@ -340,6 +374,8 @@ namespace TransformCacher
             Logger.LogInfo($"Successfully loaded {_availablePrefabs.Count} prefabs across {_prefabCategories.Count} categories");
         }
 
+        // Rest of the methods remain unchanged...
+        
         private bool ShouldAddAsPrefab(GameObject obj)
         {
             if (obj == null) return false;
@@ -585,7 +621,7 @@ namespace TransformCacher
                     _currentScene = currentScene;
                     Logger.LogInfo($"Scene changed to: {_currentScene} (detected by periodic check)");
                     
-                    if (EnablePersistence.Value && !string.IsNullOrEmpty(_currentScene))
+                    if (TransformCacherPlugin.EnablePersistence.Value && !string.IsNullOrEmpty(_currentScene))
                     {
                         // Reset attempt counter
                         _transformApplicationAttempts = 0;
@@ -664,7 +700,7 @@ namespace TransformCacher
 
         private void OnDestroy()
         {
-            // Unsubscribe from scene load event
+            // Unsubscribe from scene load events
             SceneManager.sceneLoaded -= OnSceneLoaded;
         }
 
@@ -732,11 +768,11 @@ namespace TransformCacher
                                 _lastRotation = _currentInspectedObject.transform.rotation;
                                 _lastScale = _currentInspectedObject.transform.localScale;
                                 
-                                string uniqueId = GenerateUniqueId(_currentInspectedObject.transform);
+                                string uniqueId = FixUtility.GenerateUniqueId(_currentInspectedObject.transform);
                                 Logger.LogInfo($"Now inspecting: {_currentInspectedObject.name} with Unique ID: {uniqueId}");
                                 
                                 // Add highlight to current object if enabled
-                                if (EnableObjectHighlight.Value)
+                                if (TransformCacherPlugin.EnableObjectHighlight.Value)
                                 {
                                     _currentHighlighter = _currentInspectedObject.AddComponent<SelectionHighlighter>();
                                 }
@@ -771,28 +807,28 @@ namespace TransformCacher
             try
             {
                 // Check for mouse toggle hotkey
-                if (MouseToggleHotkey != null && MouseToggleHotkey.Value.IsDown())
+                if (TransformCacherPlugin.MouseToggleHotkey != null && TransformCacherPlugin.MouseToggleHotkey.Value.IsDown())
                 {
                     ToggleMouseFocus();
                 }
                 
                 // Check other hotkeys
-                if (SaveHotkey != null && SaveHotkey.Value.IsDown())
+                if (TransformCacherPlugin.SaveHotkey != null && TransformCacherPlugin.SaveHotkey.Value.IsDown())
                 {
                     SaveAllTaggedObjects();
                 }
                 
-                if (TagHotkey != null && TagHotkey.Value.IsDown() && _currentInspectedObject != null)
+                if (TransformCacherPlugin.TagHotkey != null && TransformCacherPlugin.TagHotkey.Value.IsDown() && _currentInspectedObject != null)
                 {
                     TagObject(_currentInspectedObject);
                 }
                 
-                if (DestroyHotkey != null && DestroyHotkey.Value.IsDown() && _currentInspectedObject != null)
+                if (TransformCacherPlugin.DestroyHotkey != null && TransformCacherPlugin.DestroyHotkey.Value.IsDown() && _currentInspectedObject != null)
                 {
                     MarkForDestruction(_currentInspectedObject);
                 }
                 
-                if (SpawnHotkey != null && SpawnHotkey.Value.IsDown())
+                if (TransformCacherPlugin.SpawnHotkey != null && TransformCacherPlugin.SpawnHotkey.Value.IsDown())
                 {
                     // This is now handled by TransformCacherGUI
                 }
@@ -937,10 +973,10 @@ namespace TransformCacher
                 tag = obj.AddComponent<TransformCacherTag>();
                 
                 // Generate PathID and ItemID
-                tag.PathID = GeneratePathID(obj.transform);
-                tag.ItemID = GenerateItemID(obj.transform);
+                tag.PathID = FixUtility.GeneratePathID(obj.transform);
+                tag.ItemID = FixUtility.GenerateItemID(obj.transform);
                 
-                string uniqueId = GenerateUniqueId(obj.transform);
+                string uniqueId = FixUtility.GenerateUniqueId(obj.transform);
                 Logger.LogInfo($"Tagged object: {FixUtility.GetFullPath(obj.transform)} with ID: {uniqueId}, PathID: {tag.PathID}, ItemID: {tag.ItemID}");
             }
             else
@@ -964,7 +1000,7 @@ namespace TransformCacher
             {
                 string sceneName = obj.scene.name;
                 string objectPath = FixUtility.GetFullPath(obj.transform);
-                string uniqueId = GenerateUniqueId(obj.transform);
+                string uniqueId = FixUtility.GenerateUniqueId(obj.transform);
                 
                 Logger.LogInfo($"Marking for destruction: {objectPath} with ID: {uniqueId}");
                 
@@ -981,8 +1017,8 @@ namespace TransformCacher
                 if (tag == null)
                 {
                     tag = obj.AddComponent<TransformCacherTag>();
-                    tag.PathID = GeneratePathID(obj.transform);
-                    tag.ItemID = GenerateItemID(obj.transform);
+                    tag.PathID = FixUtility.GeneratePathID(obj.transform);
+                    tag.ItemID = FixUtility.GenerateItemID(obj.transform);
                 }
                 
                 // Mark as destroyed
@@ -1063,7 +1099,7 @@ namespace TransformCacher
                 try
                 {
                     string childPath = FixUtility.GetFullPath(child);
-                    string childUniqueId = GenerateUniqueId(child);
+                    string childUniqueId = FixUtility.GenerateUniqueId(child);
                     
                     // Add to destroyed objects cache
                     _destroyedObjectsCache[sceneName].Add(childPath);
@@ -1073,8 +1109,8 @@ namespace TransformCacher
                     if (childTag == null)
                     {
                         childTag = child.gameObject.AddComponent<TransformCacherTag>();
-                        childTag.PathID = GeneratePathID(child);
-                        childTag.ItemID = GenerateItemID(child);
+                        childTag.PathID = FixUtility.GeneratePathID(child);
+                        childTag.ItemID = FixUtility.GenerateItemID(child);
                     }
                     
                     // Mark as destroyed
@@ -1131,7 +1167,7 @@ namespace TransformCacher
             
             foreach (Transform child in parent)
             {
-                string childId = GenerateUniqueId(child);
+                string childId = FixUtility.GenerateUniqueId(child);
                 childrenIds.Add(childId);
             }
             
@@ -1176,15 +1212,15 @@ namespace TransformCacher
                 // Tag the object and mark as spawned
                 TransformCacherTag tag = spawnedObj.AddComponent<TransformCacherTag>();
                 tag.IsSpawned = true;
-                tag.PathID = GeneratePathID(spawnedObj.transform);
-                tag.ItemID = GenerateItemID(spawnedObj.transform);
+                tag.PathID = FixUtility.GeneratePathID(spawnedObj.transform);
+                tag.ItemID = FixUtility.GenerateItemID(spawnedObj.transform);
                 
                 // Save the transform data
                 SaveTransform(spawnedObj);
                 
                 // Update database to mark as spawned
                 string sceneName = spawnedObj.scene.name;
-                string uniqueId = GenerateUniqueId(spawnedObj.transform);
+                string uniqueId = FixUtility.GenerateUniqueId(spawnedObj.transform);
                 
                 var transformsDb = _databaseManager.GetTransformsDatabase();
                 if (transformsDb.ContainsKey(sceneName) && transformsDb[sceneName].ContainsKey(uniqueId))
@@ -1208,85 +1244,6 @@ namespace TransformCacher
             {
                 Logger.LogError($"Error spawning object: {ex.Message}");
             }
-        }
-
-        // Generate a unique ID for a transform that persists across game sessions
-        public static string GenerateUniqueId(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            // Try to get a baked ID first if available
-            if (Instance != null && Instance._idBaker != null)
-            {
-                BakedIdData bakedData;
-                if (Instance._idBaker.TryGetBakedId(transform, out bakedData))
-                {
-                    // This now returns the formatted UniqueId from baked data
-                    if (!string.IsNullOrEmpty(bakedData.PathID) && !string.IsNullOrEmpty(bakedData.ItemID))
-                    {
-                        return bakedData.PathID + "+" + bakedData.ItemID;
-                    }
-                    return bakedData.UniqueId;
-                }
-            }
-            
-            // Get PathID and ItemID for this transform
-            string pathId = GeneratePathID(transform);
-            string itemId = GenerateItemID(transform);
-            
-            // Combine for the new format
-            if (!string.IsNullOrEmpty(pathId) && !string.IsNullOrEmpty(itemId))
-            {
-                return pathId + "+" + itemId;
-            }
-            
-            // Fall back to old format if generation failed
-            string sceneName = transform.gameObject.scene.name;
-            string hierarchyPath = FixUtility.GetFullPath(transform);
-            
-            // Add position to make IDs more unique
-            // Round to 2 decimal places to avoid floating point precision issues
-            string positionStr = string.Format(
-                "pos_x{0:F2}y{1:F2}z{2:F2}",
-                Math.Round(transform.position.x, 2),
-                Math.Round(transform.position.y, 2),
-                Math.Round(transform.position.z, 2)
-            );
-            
-            // Simple, stable ID based on scene, path and position
-            return $"{sceneName}_{hierarchyPath}_{positionStr}";
-        }
-
-        // Generate a PathID for a transform
-        public static string GeneratePathID(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            // Get object path
-            string objectPath = FixUtility.GetFullPath(transform);
-            
-            // Create a hash code from the path for shorter ID
-            int hashCode = objectPath.GetHashCode();
-            
-            // Return a path ID that's "P" prefix + absolute hash code
-            return "P" + Math.Abs(hashCode).ToString();
-        }
-        
-        // Generate an ItemID for a transform
-        public static string GenerateItemID(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            // Use name + scene + sibling index as a unique identifier
-            string name = transform.name;
-            string scene = transform.gameObject.scene.name;
-            int siblingIndex = transform.GetSiblingIndex();
-            
-            string idSource = $"{name}_{scene}_{siblingIndex}";
-            int hashCode = idSource.GetHashCode();
-            
-            // Return an item ID that's "I" prefix + absolute hash code
-            return "I" + Math.Abs(hashCode).ToString();
         }
 
         // Save all tagged objects
@@ -1316,18 +1273,18 @@ namespace TransformCacher
                 
                 if (string.IsNullOrEmpty(uniqueId))
                 {
-                    uniqueId = GenerateUniqueId(tr);
+                    uniqueId = FixUtility.GenerateUniqueId(tr);
                 }
                 
                 // Ensure PathID and ItemID are set
                 if (string.IsNullOrEmpty(tag.PathID))
                 {
-                    tag.PathID = GeneratePathID(tr);
+                    tag.PathID = FixUtility.GeneratePathID(tr);
                 }
                 
                 if (string.IsNullOrEmpty(tag.ItemID))
                 {
-                    tag.ItemID = GenerateItemID(tr);
+                    tag.ItemID = FixUtility.GenerateItemID(tr);
                 }
                 
                 var data = new TransformData
@@ -1395,9 +1352,9 @@ namespace TransformCacher
                 Transform transform = obj.transform;
                 
                 // Generate IDs
-                string uniqueId = GenerateUniqueId(transform);
-                string pathId = GeneratePathID(transform);
-                string itemId = GenerateItemID(transform);
+                string uniqueId = FixUtility.GenerateUniqueId(transform);
+                string pathId = FixUtility.GeneratePathID(transform);
+                string itemId = FixUtility.GenerateItemID(transform);
                 
                 // Check for existing tag component or add one if needed
                 TransformCacherTag tag = obj.GetComponent<TransformCacherTag>();
@@ -1471,9 +1428,9 @@ namespace TransformCacher
                     GameObject childObj = child.gameObject;
                     
                     // Generate IDs
-                    string childUniqueId = GenerateUniqueId(child);
-                    string childPathId = GeneratePathID(child);
-                    string childItemId = GenerateItemID(child);
+                    string childUniqueId = FixUtility.GenerateUniqueId(child);
+                    string childPathId = FixUtility.GeneratePathID(child);
+                    string childItemId = FixUtility.GenerateItemID(child);
                     
                     // Check for existing tag component or add one if needed
                     TransformCacherTag childTag = childObj.GetComponent<TransformCacherTag>();
@@ -1534,7 +1491,7 @@ namespace TransformCacher
             _currentScene = scene.name;
             Logger.LogInfo($"Scene loaded event: {scene.name} (mode: {mode})");
             
-            if (!EnablePersistence.Value)
+            if (!TransformCacherPlugin.EnablePersistence.Value)
             {
                 Logger.LogInfo("Transform persistence is disabled");
                 return;
@@ -1547,14 +1504,14 @@ namespace TransformCacher
             StartCoroutine(ApplyTransformsWithRetry(scene));
         }
 
-        internal IEnumerator ApplyTransformsWithRetry(Scene scene)
+        public IEnumerator ApplyTransformsWithRetry(Scene scene)
         {
             // Wait for scene to properly initialize
-            float initialDelay = TransformDelay != null ? TransformDelay.Value : 1.0f;
+            float initialDelay = TransformCacherPlugin.TransformDelay != null ? TransformCacherPlugin.TransformDelay.Value : 1.0f;
             Logger.LogInfo($"Waiting {initialDelay}s before applying transforms to {scene.name}");
             yield return new WaitForSeconds(initialDelay);
             
-            int maxAttempts = MaxRetries != null ? MaxRetries.Value : 3;
+            int maxAttempts = TransformCacherPlugin.MaxRetries != null ? TransformCacherPlugin.MaxRetries.Value : 3;
             bool success = false;
             
             while (_transformApplicationAttempts < maxAttempts && !success)
@@ -1651,8 +1608,8 @@ namespace TransformCacher
                         if (tag == null)
                         {
                             tag = obj.AddComponent<TransformCacherTag>();
-                            tag.PathID = GeneratePathID(obj.transform);
-                            tag.ItemID = GenerateItemID(obj.transform);
+                            tag.PathID = FixUtility.GeneratePathID(obj.transform);
+                            tag.ItemID = FixUtility.GenerateItemID(obj.transform);
                             tag.IsDestroyed = true;
                         }
                         
@@ -1706,14 +1663,14 @@ namespace TransformCacher
                         // First try by name
                         if (!string.IsNullOrEmpty(entry.PrefabPath))
                         {
-                            prefab = _availablePrefabs.FirstOrDefault(p => p.name == entry.PrefabPath);
+                            prefab = _availablePrefabs.FirstOrDefault(p => p != null && p.name == entry.PrefabPath);
                         }
                         
                         // If not found, try to find by similar name
                         if (prefab == null && !string.IsNullOrEmpty(entry.ObjectName))
                         {
                             string baseName = entry.ObjectName.Replace("_spawned", "");
-                            prefab = _availablePrefabs.FirstOrDefault(p => p.name == baseName);
+                            prefab = _availablePrefabs.FirstOrDefault(p => p != null && p.name == baseName);
                         }
                         
                         // Use a default if nothing found
@@ -1808,8 +1765,8 @@ namespace TransformCacher
                     objectsBySiblingPath[siblingPath] = obj;
                     
                     // By path ID and item ID
-                    string pathId = GeneratePathID(obj.transform);
-                    string itemId = GenerateItemID(obj.transform);
+                    string pathId = FixUtility.GeneratePathID(obj.transform);
+                    string itemId = FixUtility.GenerateItemID(obj.transform);
                     
                     objectsByPathId[pathId] = obj;
                     objectsByItemId[itemId] = obj;
