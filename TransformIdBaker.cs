@@ -14,6 +14,11 @@ namespace TransformCacher
     /// </summary>
     public class TransformIdBaker : MonoBehaviour
     {
+
+        // Public methods to access private fields
+        public bool IsBaking() => _isBaking;
+        public string GetBakingStatus() => _bakingStatus;
+        public float GetBakingProgress() => _bakingProgress;
         private static TransformIdBaker _instance;
         public static TransformIdBaker Instance => _instance;
 
