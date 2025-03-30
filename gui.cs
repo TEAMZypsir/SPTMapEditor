@@ -44,6 +44,12 @@ namespace TransformCacher
 
         // For database scene selection
         private int _selectedSceneIndex = 0;
+
+        private string _exportBasePath = "";
+        private bool _showExportPathSelector = false;
+        private Vector2 _exportPathScrollPosition = Vector2.zero;
+        private Rect _exportPathSelectorRect = new Rect(20, 100, 500, 300);
+        private bool _showAdvancedExportOptions = false;
         
         // TransformIdBaker UI
         private bool _showBakerWindow = false;
@@ -636,21 +642,64 @@ namespace TransformCacher
             GUILayout.Label("Export Settings", GUI.skin.box);
             GUILayout.Space(10);
             
+            // Export path display and selection
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Export Path:", GUILayout.Width(80));
+            
+            // Show the current export path (truncated if too long)
+            string displayPath = _exportBasePath;
+            if (displayPath.Length > 40)
+            {
+                displayPath = "..." + displayPath.Substring(displayPath.Length - 38);
+            }
+            
+            GUILayout.Label(displayPath, GUILayout.Width(200));
+            
+            if (GUILayout.Button("Browse", GUILayout.Width(70)))
+            {
+                _showExportPathSelector = true;
+            }
+            
+            GUILayout.EndHorizontal();
+            
+            GUILayout.Space(10);
+            
             // Toggle for including children
             _includeChildren = GUILayout.Toggle(_includeChildren, "Include Children");
             
-            // Export format selection
+            // Export format selection - we're forcing GLTF but still showing the option
             GUILayout.BeginHorizontal();
             GUILayout.Label("Format:", GUILayout.Width(60));
             
-            bool newUseGlbFormat = GUILayout.Toggle(_useGlbFormat, "GLB (Binary)", GUILayout.Width(100));
-            if (newUseGlbFormat != _useGlbFormat)
-            {
-                _useGlbFormat = newUseGlbFormat;
-            }
+            // Force GLTF to be selected and GLB to be unselected
+            _useGlbFormat = false;
+            GUI.enabled = false;
+            GUILayout.Toggle(_useGlbFormat, "GLB (Binary)", GUILayout.Width(100));
+            GUI.enabled = true;
             
-            GUILayout.Toggle(!_useGlbFormat, "GLTF (Text)", GUILayout.Width(100));
+            // GLTF is always selected and can't be changed
+            GUILayout.Toggle(true, "GLTF (Text)", GUILayout.Width(100));
             GUILayout.EndHorizontal();
+            
+            // Add texture export options
+            _showAdvancedExportOptions = GUILayout.Toggle(_showAdvancedExportOptions, "Show Advanced Options");
+            
+            if (_showAdvancedExportOptions)
+            {
+                GUILayout.BeginVertical(GUI.skin.box);
+                
+                // Texture format (always PNG as per requirements)
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Texture Format:", GUILayout.Width(100));
+                
+                GUI.enabled = false;
+                GUILayout.Toggle(true, "PNG", GUILayout.Width(60));
+                GUI.enabled = true;
+                
+                GUILayout.EndHorizontal();
+                
+                GUILayout.EndVertical();
+            }
             
             GUILayout.Space(10);
             
@@ -681,8 +730,22 @@ namespace TransformCacher
             
             GUILayout.FlexibleSpace();
             
+            // Export progress display if in progress
+            EnhancedExporter exporter = FindObjectOfType<EnhancedExporter>();
+            if (exporter != null && exporter.ExportInProgress)
+            {
+                GUILayout.Label(exporter.ExportStatus);
+                
+                // Draw progress bar
+                Rect progressRect = GUILayoutUtility.GetRect(100, 20);
+                EditorGUI.ProgressBar(progressRect, exporter.ExportProgress, 
+                    $"{Mathf.RoundToInt(exporter.ExportProgress * 100)}%");
+                
+                GUILayout.Space(10);
+            }
+            
             // Export button
-            GUI.enabled = selectedObjects.Count > 0;
+            GUI.enabled = selectedObjects.Count > 0 && (exporter == null || !exporter.ExportInProgress);
             if (GUILayout.Button("Export Selected Objects", GUILayout.Height(40)))
             {
                 ExportSelectedObjects(selectedObjects);
@@ -699,6 +762,100 @@ namespace TransformCacher
             
             // Allow the window to be dragged
             GUI.DragWindow();
+            
+            // Show path selector if needed
+            if (_showExportPathSelector)
+            {
+                DrawExportPathSelector();
+            }
+        }
+        private void DrawExportPathSelector()
+        {
+            _exportPathSelectorRect = GUI.Window(99, _exportPathSelectorRect, (id) => {
+                GUILayout.BeginVertical();
+                
+                GUILayout.Label("Select Export Directory", GUI.skin.box);
+                
+                // List common paths
+                GUILayout.Label("Common Paths:");
+                
+                if (GUILayout.Button("Plugin Directory"))
+                {
+                    _exportBasePath = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
+                }
+                
+                if (GUILayout.Button("Game Directory"))
+                {
+                    _exportBasePath = Path.Combine(Paths.GameRootPath, "Exports");
+                }
+                
+                if (GUILayout.Button("Desktop"))
+                {
+                    _exportBasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "TransformCacher_Exports");
+                }
+                
+                if (GUILayout.Button("My Documents"))
+                {
+                    _exportBasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "TransformCacher_Exports");
+                }
+                
+                GUILayout.Space(10);
+                
+                // Custom path entry
+                GUILayout.Label("Custom Path:");
+                
+                _exportPathScrollPosition = GUILayout.BeginScrollView(_exportPathScrollPosition, GUILayout.Height(100));
+                _exportBasePath = GUILayout.TextArea(_exportBasePath, GUILayout.ExpandWidth(true), GUILayout.Height(60));
+                GUILayout.EndScrollView();
+                
+                // Test and create path
+                GUILayout.BeginHorizontal();
+                
+                if (GUILayout.Button("Test Path"))
+                {
+                    try
+                    {
+                        bool exists = Directory.Exists(_exportBasePath);
+                        if (!exists)
+                        {
+                            if (GUILayout.Button("Create Directory"))
+                            {
+                                Directory.CreateDirectory(_exportBasePath);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        TransformCacherPlugin.Log.LogError($"Error checking path: {ex.Message}");
+                    }
+                }
+                
+                if (GUILayout.Button("Create Directory"))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(_exportBasePath);
+                        TransformCacherPlugin.Log.LogInfo($"Created directory: {_exportBasePath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        TransformCacherPlugin.Log.LogError($"Error creating directory: {ex.Message}");
+                    }
+                }
+                
+                GUILayout.EndHorizontal();
+                
+                GUILayout.FlexibleSpace();
+                
+                if (GUILayout.Button("Close", GUILayout.Height(30)))
+                {
+                    _showExportPathSelector = false;
+                }
+                
+                GUILayout.EndVertical();
+                
+                GUI.DragWindow();
+            }, "Select Export Path");
         }
         
         // Baker window code integrated from TransformIdBaker
@@ -895,7 +1052,7 @@ namespace TransformCacher
         {
             if (selectedObjects.Count == 0)
             {
-                Logger.LogWarning("No objects selected for export");
+                TransformCacherPlugin.Log.LogWarning("No objects selected for export");
                 return;
             }
             
@@ -905,83 +1062,37 @@ namespace TransformCacher
                 string filename = string.IsNullOrEmpty(_customFilename) ? 
                     selectedObjects.First().name : _customFilename;
                     
-                // Add extension if not present
-                if (!filename.EndsWith(".glb") && !filename.EndsWith(".gltf"))
+                // Add extension if not present (always .gltf)
+                if (!filename.EndsWith(".gltf") && !filename.EndsWith(".glb"))
                 {
-                    filename += _useGlbFormat ? ".glb" : ".gltf";
+                    filename += ".gltf"; // Force GLTF format
                 }
                 
-                // Try to find TarkinItemExporter
-                Type tarkinExporter = null;
-                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                // Make sure export directory exists
+                if (!Directory.Exists(_exportBasePath))
                 {
-                    tarkinExporter = assembly.GetType("TarkinItemExporter.Exporter");
-                    if (tarkinExporter != null) break;
+                    Directory.CreateDirectory(_exportBasePath);
                 }
                 
-                if (tarkinExporter != null)
+                // Find or create EnhancedExporter
+                EnhancedExporter exporter = FindObjectOfType<EnhancedExporter>();
+                if (exporter == null)
                 {
-                    // Set glb format flag
-                    var glbField = tarkinExporter.GetField("glb");
-                    if (glbField != null)
-                    {
-                        glbField.SetValue(null, _useGlbFormat);
-                    }
-                    
-                    // Get default output directory
-                    string outputDir = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
-                    
-                    // Try to get configured output directory
-                    var pluginType = Type.GetType("TarkinItemExporter.Plugin");
-                    if (pluginType != null)
-                    {
-                        var outputDirField = pluginType.GetField("OutputDir");
-                        if (outputDirField != null)
-                        {
-                            var configEntry = outputDirField.GetValue(null);
-                            if (configEntry != null)
-                            {
-                                // Try to get Value property from ConfigEntry
-                                var valueProperty = configEntry.GetType().GetProperty("Value");
-                                if (valueProperty != null)
-                                {
-                                    var value = valueProperty.GetValue(configEntry);
-                                    if (value != null)
-                                    {
-                                        outputDir = value.ToString();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Create directory if it doesn't exist
-                    Directory.CreateDirectory(outputDir);
-                    
-                    // Call the export method
-                    var exportMethod = tarkinExporter.GetMethod("Export", new[] { 
-                        typeof(HashSet<GameObject>), typeof(string), typeof(string) 
-                    });
-                    
-                    if (exportMethod != null)
-                    {
-                        exportMethod.Invoke(null, new object[] { selectedObjects, outputDir, filename });
-                        Logger.LogInfo($"Export initiated to {Path.Combine(outputDir, filename)}");
-                        _showExportWindow = false;
-                    }
-                    else
-                    {
-                        Logger.LogError("Export method not found in TarkinItemExporter");
-                    }
+                    var exporterObj = new GameObject("EnhancedExporter");
+                    exporter = exporterObj.AddComponent<EnhancedExporter>();
+                    exporter.Initialize();
+                    DontDestroyOnLoad(exporterObj);
                 }
-                else
-                {
-                    Logger.LogWarning("TarkinItemExporter not found. Install it for model export support.");
-                }
+                
+                // Set exporter properties and start export
+                exporter.ExportPath = _exportBasePath;
+                exporter.Export(selectedObjects, filename);
+                
+                TransformCacherPlugin.Log.LogInfo($"Export initiated for {selectedObjects.Count} objects to {Path.Combine(_exportBasePath, filename)}");
             }
             catch (Exception ex)
             {
-                Logger.LogError($"Error during export: {ex.Message}\n{ex.StackTrace}");
+                TransformCacherPlugin.Log.LogError($"Error during export: {ex.Message}\n{ex.StackTrace}");
             }
         }
         
