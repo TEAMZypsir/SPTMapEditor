@@ -73,16 +73,61 @@ namespace TransformCacher
             try
             {
                 LoadUnityGltfTypes();
+                
+                // Verify the initialization was successful
+                if (_gltfExporterType == null || _gltfSettingsType == null || _gltfSettings == null)
+                {
+                    TransformCacherPlugin.Log.LogError("UnityGLTF types could not be initialized correctly.");
+                    
+                    // Try to load UnityGLTF assemblies explicitly from known locations
+                    string pluginPath = Path.Combine(Paths.PluginPath, "TransformCacher");
+                    string dependenciesPath = Path.Combine(pluginPath, "libs");
+                    
+                    if (Directory.Exists(dependenciesPath))
+                    {
+                        TransformCacherPlugin.Log.LogInfo($"Trying to load UnityGLTF from dependencies directory: {dependenciesPath}");
+                        
+                        string[] dllFiles = Directory.GetFiles(dependenciesPath, "*.dll", SearchOption.AllDirectories);
+                        foreach (string dllFile in dllFiles)
+                        {
+                            try
+                            {
+                                string fileName = Path.GetFileName(dllFile);
+                                if (fileName.Contains("UnityGLTF"))
+                                {
+                                    TransformCacherPlugin.Log.LogInfo($"Found potential UnityGLTF DLL: {fileName}");
+                                    
+                                    // Try to load the assembly
+                                    Assembly assembly = Assembly.LoadFrom(dllFile);
+                                    if (assembly != null)
+                                    {
+                                        TransformCacherPlugin.Log.LogInfo($"Successfully loaded: {fileName}");
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                TransformCacherPlugin.Log.LogWarning($"Failed to load DLL {dllFile}: {ex.Message}");
+                            }
+                        }
+                        
+                        // Try loading types again
+                        LoadUnityGltfTypes();
+                    }
+                }
             }
             catch (Exception ex)
             {
-                TransformCacherPlugin.Log.LogError($"Failed to initialize UnityGLTF: {ex.Message}");
+                TransformCacherPlugin.Log.LogError($"Failed to initialize UnityGLTF: {ex.Message}\n{ex.StackTrace}");
             }
             
             TransformCacherPlugin.Log.LogInfo($"EnhancedExporter initialized with export path: {_exportPath}");
             TransformCacherPlugin.Log.LogInfo($"Export format: {(_useGltfFormat ? "GLTF" : "GLB")} with {_textureFormat.ToUpper()} textures");
+            
+            // Add fallback for meshes that aren't readable
+            TransformCacherPlugin.Log.LogInfo("Setting up mesh reimport capability...");
         }
-        
+
         /// <summary>
         /// Load UnityGLTF types and assemblies
         /// </summary>
@@ -97,6 +142,7 @@ namespace TransformCacher
                 if (assembly.GetName().Name.Contains("UnityGLTF"))
                 {
                     unityGltfAssembly = assembly;
+                    TransformCacherPlugin.Log.LogInfo($"Found UnityGLTF assembly: {assembly.GetName().Name}");
                     break;
                 }
             }
@@ -136,7 +182,38 @@ namespace TransformCacher
             {
                 // Get GLTF exporter and settings types
                 _gltfExporterType = unityGltfAssembly.GetType("UnityGLTF.GLTFSceneExporter");
+                if (_gltfExporterType == null)
+                {
+                    TransformCacherPlugin.Log.LogError("Could not find GLTFSceneExporter type");
+                    
+                    // Try to search for it with different name patterns
+                    foreach (var type in unityGltfAssembly.GetTypes())
+                    {
+                        if (type.Name.Contains("SceneExporter") || type.Name.Contains("Exporter"))
+                        {
+                            TransformCacherPlugin.Log.LogInfo($"Found potential exporter type: {type.FullName}");
+                            _gltfExporterType = type;
+                            break;
+                        }
+                    }
+                }
+                
                 _gltfSettingsType = unityGltfAssembly.GetType("UnityGLTF.GLTFSettings");
+                if (_gltfSettingsType == null)
+                {
+                    TransformCacherPlugin.Log.LogError("Could not find GLTFSettings type");
+                    
+                    // Try to search for it with different name patterns
+                    foreach (var type in unityGltfAssembly.GetTypes())
+                    {
+                        if (type.Name.Contains("Settings"))
+                        {
+                            TransformCacherPlugin.Log.LogInfo($"Found potential settings type: {type.FullName}");
+                            _gltfSettingsType = type;
+                            break;
+                        }
+                    }
+                }
                 
                 if (_gltfExporterType != null && _gltfSettingsType != null)
                 {
@@ -148,6 +225,21 @@ namespace TransformCacher
                     {
                         _gltfSettings = getSettingsMethod.Invoke(null, null);
                         TransformCacherPlugin.Log.LogInfo("Successfully initialized UnityGLTF types");
+                    }
+                    else
+                    {
+                        TransformCacherPlugin.Log.LogError("GetOrCreateSettings method not found");
+                        
+                        // Try to create a new instance directly
+                        try
+                        {
+                            _gltfSettings = Activator.CreateInstance(_gltfSettingsType);
+                            TransformCacherPlugin.Log.LogInfo("Created GLTFSettings instance directly");
+                        }
+                        catch (Exception ex)
+                        {
+                            TransformCacherPlugin.Log.LogError($"Failed to create GLTFSettings instance: {ex.Message}");
+                        }
                     }
                 }
             }

@@ -295,6 +295,14 @@ namespace TransformCacher
                 Log.LogError($"Error during initialization: {ex.Message}\n{ex.StackTrace}");
             }
         }
+        public void OnDisable()
+        {
+            if (_initialized)
+            {
+                // Perform cleanup only if initialized
+                Log.LogInfo("TransformCacher plugin disabled");
+            }
+        }
         
         private IEnumerator InitializeBundles()
         {

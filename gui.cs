@@ -29,7 +29,7 @@ namespace TransformCacher
         private Vector2 _categoryScrollPosition = Vector2.zero;
         private bool _showCategoryDropdown = false;
         private string _prefabSearchText = "";
-        private GameObject _selectedPrefab = null;
+        public GameObject _selectedPrefab = null; // Made public for access from TransformCacher
         private string _selectedCategory = "All";
         
         // Export window properties
@@ -40,8 +40,6 @@ namespace TransformCacher
         private string _customFilename = "";
         private bool _useGlbFormat = false;
         
-        // Add this to the TransformCacherGUI class variable section:
-
         // For database scene selection
         private int _selectedSceneIndex = 0;
 
@@ -79,6 +77,17 @@ namespace TransformCacher
             
             // Get logger
             Logger = BepInEx.Logging.Logger.CreateLogSource("TransformCacherGUI");
+            
+            // Set default export path
+            if (TransformCacherPlugin.DefaultExportPath != null && !string.IsNullOrEmpty(TransformCacherPlugin.DefaultExportPath.Value))
+            {
+                _exportBasePath = TransformCacherPlugin.DefaultExportPath.Value;
+            }
+            else
+            {
+                _exportBasePath = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
+            }
+            
             Logger.LogInfo("TransformCacherGUI initialized successfully");
         }
         
@@ -106,20 +115,26 @@ namespace TransformCacher
                     // Main window
                     _windowRect = GUI.Window(0, _windowRect, DrawMainWindow, "Transform Cacher");
                     
-                    // Prefab selector window
+                    // Prefab selector window - only draw at top level
                     if (_showPrefabSelector)
                     {
                         Rect selectorRect = new Rect(_windowRect.x + _windowRect.width + 10, _windowRect.y, 500, 500);
                         GUI.Window(1, selectorRect, DrawPrefabSelector, "Prefab Selector");
                     }
                     
-                    // Export window
+                    // Export window - only draw at top level
                     if (_showExportWindow)
                     {
                         _exportWindowRect = GUILayout.Window(2, _exportWindowRect, DrawExportWindow, "Export Objects");
                     }
                     
-                    // Baker window from TransformIdBaker
+                    // Export path selector - only draw at top level, not inside export window
+                    if (_showExportPathSelector)
+                    {
+                        _exportPathSelectorRect = GUI.Window(99, _exportPathSelectorRect, DrawExportPathSelectorWindow, "Select Export Path");
+                    }
+                    
+                    // Baker window - only draw at top level
                     if (_showBakerWindow && _idBaker != null)
                     {
                         _bakerWindowRect = GUI.Window(100, _bakerWindowRect, DrawBakerWindow, "Transform ID Baker");
@@ -219,7 +234,7 @@ namespace TransformCacher
                         _showPrefabSelector = !_showPrefabSelector;
                         if (_showPrefabSelector && _transformCacher != null && !_transformCacher.ArePrefabsLoaded())
                         {
-                            _transformCacher.LoadPrefabs();
+                            _transformCacher.StartCoroutine(_transformCacher.LoadPrefabs());
                         }
                     }
                     
@@ -360,107 +375,107 @@ namespace TransformCacher
                         try
                         {
                             transformsDb = _databaseManager.GetTransformsDatabase();
-                        }
-                        catch (Exception ex)
-                        {
-                            GUILayout.Label($"Error accessing database: {ex.Message}");
-                            transformsDb = null;
-                        }
-                        
-                        if (transformsDb == null || transformsDb.Count == 0)
-                        {
-                            GUILayout.Label("No database entries found");
-                        }
-                        else
-                        {
-                            // Display a fixed format summary instead of dynamic per-scene entries
-                            int totalScenes = 0;
-                            int totalObjects = 0;
-                            int totalDestroyed = 0;
-                            int totalSpawned = 0;
                             
-                            foreach (var sceneEntry in transformsDb)
+                            if (transformsDb == null || transformsDb.Count == 0)
                             {
-                                if (sceneEntry.Value != null)
+                                GUILayout.Label("No database entries found");
+                            }
+                            else
+                            {
+                                // Display a fixed format summary instead of dynamic per-scene entries
+                                int totalScenes = 0;
+                                int totalObjects = 0;
+                                int totalDestroyed = 0;
+                                int totalSpawned = 0;
+                                
+                                foreach (var sceneEntry in transformsDb)
                                 {
-                                    totalScenes++;
-                                    totalObjects += sceneEntry.Value.Count;
-                                    
-                                    foreach (var dataEntry in sceneEntry.Value.Values)
+                                    if (sceneEntry.Value != null)
                                     {
-                                        if (dataEntry != null)
+                                        totalScenes++;
+                                        totalObjects += sceneEntry.Value.Count;
+                                        
+                                        foreach (var dataEntry in sceneEntry.Value.Values)
                                         {
-                                            if (dataEntry.IsDestroyed) totalDestroyed++;
-                                            if (dataEntry.IsSpawned) totalSpawned++;
+                                            if (dataEntry != null)
+                                            {
+                                                if (dataEntry.IsDestroyed) totalDestroyed++;
+                                                if (dataEntry.IsSpawned) totalSpawned++;
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            
-                            // Display summary stats - consistent across layout/repaint
-                            GUILayout.Label($"Total Scenes: {totalScenes}");
-                            GUILayout.Label($"Total Objects: {totalObjects}");
-                            GUILayout.Label($"Destroyed Objects: {totalDestroyed}");
-                            GUILayout.Label($"Spawned Objects: {totalSpawned}");
-                            
-                            // Show one scene at a time with a selector to avoid dynamic GUI changes
-                            if (totalScenes > 0)
-                            {
-                                string[] sceneNames = transformsDb.Keys.ToArray();
                                 
-                                // Static index for scene selection
-                                if (_selectedSceneIndex >= sceneNames.Length)
-                                    _selectedSceneIndex = 0;
+                                // Display summary stats - consistent across layout/repaint
+                                GUILayout.Label($"Total Scenes: {totalScenes}");
+                                GUILayout.Label($"Total Objects: {totalObjects}");
+                                GUILayout.Label($"Destroyed Objects: {totalDestroyed}");
+                                GUILayout.Label($"Spawned Objects: {totalSpawned}");
                                 
-                                // Scene selector
-                                GUILayout.Space(10);
-                                GUILayout.Label("Scene Details:", GUI.skin.box);
-                                
-                                // Previous/Next buttons for scene selection
-                                GUILayout.BeginHorizontal();
-                                
-                                if (GUILayout.Button("◄ Prev", GUILayout.Width(70)))
+                                // Show one scene at a time with a selector to avoid dynamic GUI changes
+                                if (totalScenes > 0)
                                 {
-                                    _selectedSceneIndex--;
-                                    if (_selectedSceneIndex < 0)
-                                        _selectedSceneIndex = sceneNames.Length - 1;
-                                }
-                                
-                                // Center scene name
-                                GUILayout.FlexibleSpace();
-                                GUILayout.Label(sceneNames[_selectedSceneIndex], GUILayout.Width(150));
-                                GUILayout.FlexibleSpace();
-                                
-                                if (GUILayout.Button("Next ►", GUILayout.Width(70)))
-                                {
-                                    _selectedSceneIndex++;
+                                    string[] sceneNames = transformsDb.Keys.ToArray();
+                                    
+                                    // Static index for scene selection
                                     if (_selectedSceneIndex >= sceneNames.Length)
                                         _selectedSceneIndex = 0;
-                                }
-                                
-                                GUILayout.EndHorizontal();
-                                
-                                // Display scene stats
-                                string selectedScene = sceneNames[_selectedSceneIndex];
-                                var sceneData = transformsDb[selectedScene];
-                                
-                                int sceneObjects = sceneData.Count;
-                                int sceneDestroyed = 0;
-                                int sceneSpawned = 0;
-                                
-                                foreach (var data in sceneData.Values)
-                                {
-                                    if (data != null)
+                                    
+                                    // Scene selector
+                                    GUILayout.Space(10);
+                                    GUILayout.Label("Scene Details:", GUI.skin.box);
+                                    
+                                    // Previous/Next buttons for scene selection
+                                    GUILayout.BeginHorizontal();
+                                    
+                                    if (GUILayout.Button("◄ Prev", GUILayout.Width(70)))
                                     {
-                                        if (data.IsDestroyed) sceneDestroyed++;
-                                        if (data.IsSpawned) sceneSpawned++;
+                                        _selectedSceneIndex--;
+                                        if (_selectedSceneIndex < 0)
+                                            _selectedSceneIndex = sceneNames.Length - 1;
                                     }
+                                    
+                                    // Center scene name
+                                    GUILayout.FlexibleSpace();
+                                    GUILayout.Label(sceneNames[_selectedSceneIndex], GUILayout.Width(150));
+                                    GUILayout.FlexibleSpace();
+                                    
+                                    if (GUILayout.Button("Next ►", GUILayout.Width(70)))
+                                    {
+                                        _selectedSceneIndex++;
+                                        if (_selectedSceneIndex >= sceneNames.Length)
+                                            _selectedSceneIndex = 0;
+                                    }
+                                    
+                                    GUILayout.EndHorizontal();
+                                    
+                                    // Display scene stats
+                                    string selectedScene = sceneNames[_selectedSceneIndex];
+                                    var sceneData = transformsDb[selectedScene];
+                                    
+                                    int sceneObjects = sceneData.Count;
+                                    int sceneDestroyed = 0;
+                                    int sceneSpawned = 0;
+                                    
+                                    foreach (var data in sceneData.Values)
+                                    {
+                                        if (data != null)
+                                        {
+                                            if (data.IsDestroyed) sceneDestroyed++;
+                                            if (data.IsSpawned) sceneSpawned++;
+                                        }
+                                    }
+                                    
+                                    GUILayout.Label($"Objects: {sceneObjects}");
+                                    GUILayout.Label($"Destroyed: {sceneDestroyed}");
+                                    GUILayout.Label($"Spawned: {sceneSpawned}");
                                 }
-                                
-                                GUILayout.Label($"Objects: {sceneObjects}");
-                                GUILayout.Label($"Destroyed: {sceneDestroyed}");
-                                GUILayout.Label($"Spawned: {sceneSpawned}");
                             }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError($"Error accessing database: {ex.Message}");
+                            GUILayout.Label("Error accessing database");
                         }
                     }
                 }
@@ -528,6 +543,19 @@ namespace TransformCacher
         {
             GUILayout.BeginVertical();
             
+            // Check for proper transform cacher reference
+            if (_transformCacher == null)
+            {
+                GUILayout.Label("Error: TransformCacher reference is missing");
+                if (GUILayout.Button("Close"))
+                {
+                    _showPrefabSelector = false;
+                }
+                GUILayout.EndVertical();
+                GUI.DragWindow();
+                return;
+            }
+            
             // Search field
             GUILayout.BeginHorizontal();
             GUILayout.Label("Search:", GUILayout.Width(60));
@@ -565,67 +593,92 @@ namespace TransformCacher
                     dropdownRect.width = 210;
                     
                     var categoryNames = _transformCacher.GetCategoryNames();
-                    dropdownRect.height = Mathf.Min(categoryNames.Count * 25, 200);
-                    
-                    GUILayout.BeginArea(dropdownRect, GUI.skin.box);
-                    _categoryScrollPosition = GUILayout.BeginScrollView(_categoryScrollPosition, GUILayout.Height(dropdownRect.height - 10));
-                    
-                    foreach (var category in categoryNames)
+                    if (categoryNames != null && categoryNames.Count > 0)
                     {
-                        int count = _transformCacher.GetPrefabCountForCategory(category);
-                        if (GUILayout.Button($"{category} ({count})"))
+                        dropdownRect.height = Mathf.Min(categoryNames.Count * 25, 200);
+                        
+                        GUILayout.BeginArea(dropdownRect, GUI.skin.box);
+                        _categoryScrollPosition = GUILayout.BeginScrollView(_categoryScrollPosition, GUILayout.Height(dropdownRect.height - 10));
+                        
+                        foreach (var category in categoryNames)
                         {
-                            _selectedCategory = category;
-                            _transformCacher.SetSelectedCategory(_selectedCategory);
-                            _showCategoryDropdown = false;
+                            int count = _transformCacher.GetPrefabCountForCategory(category);
+                            if (GUILayout.Button($"{category} ({count})"))
+                            {
+                                _selectedCategory = category;
+                                _transformCacher.SetSelectedCategory(_selectedCategory);
+                                _showCategoryDropdown = false;
+                            }
                         }
+                        
+                        GUILayout.EndScrollView();
+                        GUILayout.EndArea();
                     }
-                    
-                    GUILayout.EndScrollView();
-                    GUILayout.EndArea();
                 }
                 
-                // Get filtered prefabs
-                List<GameObject> filteredPrefabs = _transformCacher.GetFilteredPrefabs(_prefabSearchText);
-                
-                GUILayout.Label($"Found {filteredPrefabs.Count} prefabs in '{_selectedCategory}'{(!string.IsNullOrEmpty(_prefabSearchText) ? $" matching '{_prefabSearchText}'" : "")}");
-                
-                // Scrollable list
-                _prefabScrollPosition = GUILayout.BeginScrollView(_prefabScrollPosition, GUILayout.Height(350));
-                
-                foreach (var prefab in filteredPrefabs)
+                try
                 {
-                    if (prefab == null) continue;
+                    // Get filtered prefabs
+                    List<GameObject> filteredPrefabs = _transformCacher.GetFilteredPrefabs(_prefabSearchText);
                     
-                    bool isSelected = _selectedPrefab == prefab;
-                    GUI.color = isSelected ? Color.green : Color.white;
-                    
-                    if (GUILayout.Button(prefab.name, GUILayout.Height(30)))
+                    if (filteredPrefabs != null)
                     {
-                        _selectedPrefab = prefab;
+                        GUILayout.Label($"Found {filteredPrefabs.Count} prefabs in '{_selectedCategory}'{(!string.IsNullOrEmpty(_prefabSearchText) ? $" matching '{_prefabSearchText}'" : "")}");
+                        
+                        // Scrollable list
+                        _prefabScrollPosition = GUILayout.BeginScrollView(_prefabScrollPosition, GUILayout.Height(350));
+                        
+                        foreach (var prefab in filteredPrefabs)
+                        {
+                            if (prefab == null) continue;
+                            
+                            bool isSelected = _selectedPrefab == prefab;
+                            GUI.color = isSelected ? Color.green : Color.white;
+                            
+                            if (GUILayout.Button(prefab.name, GUILayout.Height(30)))
+                            {
+                                _selectedPrefab = prefab;
+                            }
+                            
+                            GUI.color = Color.white;
+                        }
+                        
+                        GUILayout.EndScrollView();
                     }
-                    
-                    GUI.color = Color.white;
+                    else
+                    {
+                        GUILayout.Label("No prefabs found");
+                    }
                 }
-                
-                GUILayout.EndScrollView();
+                catch (Exception ex)
+                {
+                    GUILayout.Label($"Error getting prefabs: {ex.Message}");
+                    Logger.LogError($"Error in prefab selector: {ex.Message}");
+                }
                 
                 // Spawn button
                 GUI.enabled = _selectedPrefab != null;
                 if (GUILayout.Button("Spawn Selected Object", GUILayout.Height(40)))
                 {
-                    _transformCacher.SpawnObject(_selectedPrefab);
-                    // Clear selection and hide the selector
-                    _selectedPrefab = null;
-                    _showPrefabSelector = false;
+                    try
+                    {
+                        _transformCacher.SpawnObject(_selectedPrefab);
+                        // Clear selection and hide the selector
+                        _selectedPrefab = null;
+                        _showPrefabSelector = false;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError($"Error spawning object: {ex.Message}");
+                    }
                 }
                 GUI.enabled = true;
-                
-                // Close button
-                if (GUILayout.Button("Close", GUILayout.Height(30)))
-                {
-                    _showPrefabSelector = false;
-                }
+            }
+            
+            // Close button
+            if (GUILayout.Button("Close", GUILayout.Height(30)))
+            {
+                _showPrefabSelector = false;
             }
             
             GUILayout.EndVertical();
@@ -648,6 +701,12 @@ namespace TransformCacher
             
             // Show the current export path (truncated if too long)
             string displayPath = _exportBasePath;
+            if (string.IsNullOrEmpty(displayPath))
+            {
+                displayPath = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
+                _exportBasePath = displayPath;
+            }
+            
             if (displayPath.Length > 40)
             {
                 displayPath = "..." + displayPath.Substring(displayPath.Length - 38);
@@ -762,103 +821,90 @@ namespace TransformCacher
             
             // Allow the window to be dragged
             GUI.DragWindow();
-            
-            // Show path selector if needed
-            if (_showExportPathSelector)
-            {
-                DrawExportPathSelector();
-            }
-        }
-        private void DrawExportPathSelector()
-        {
-            _exportPathSelectorRect = GUI.Window(99, _exportPathSelectorRect, (id) => {
-                GUILayout.BeginVertical();
-                
-                GUILayout.Label("Select Export Directory", GUI.skin.box);
-                
-                // List common paths
-                GUILayout.Label("Common Paths:");
-                
-                if (GUILayout.Button("Plugin Directory"))
-                {
-                    _exportBasePath = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
-                }
-                
-                if (GUILayout.Button("Game Directory"))
-                {
-                    _exportBasePath = Path.Combine(Paths.GameRootPath, "Exports");
-                }
-                
-                if (GUILayout.Button("Desktop"))
-                {
-                    _exportBasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "TransformCacher_Exports");
-                }
-                
-                if (GUILayout.Button("My Documents"))
-                {
-                    _exportBasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "TransformCacher_Exports");
-                }
-                
-                GUILayout.Space(10);
-                
-                // Custom path entry
-                GUILayout.Label("Custom Path:");
-                
-                _exportPathScrollPosition = GUILayout.BeginScrollView(_exportPathScrollPosition, GUILayout.Height(100));
-                _exportBasePath = GUILayout.TextArea(_exportBasePath, GUILayout.ExpandWidth(true), GUILayout.Height(60));
-                GUILayout.EndScrollView();
-                
-                // Test and create path
-                GUILayout.BeginHorizontal();
-                
-                if (GUILayout.Button("Test Path"))
-                {
-                    try
-                    {
-                        bool exists = Directory.Exists(_exportBasePath);
-                        if (!exists)
-                        {
-                            if (GUILayout.Button("Create Directory"))
-                            {
-                                Directory.CreateDirectory(_exportBasePath);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        TransformCacherPlugin.Log.LogError($"Error checking path: {ex.Message}");
-                    }
-                }
-                
-                if (GUILayout.Button("Create Directory"))
-                {
-                    try
-                    {
-                        Directory.CreateDirectory(_exportBasePath);
-                        TransformCacherPlugin.Log.LogInfo($"Created directory: {_exportBasePath}");
-                    }
-                    catch (Exception ex)
-                    {
-                        TransformCacherPlugin.Log.LogError($"Error creating directory: {ex.Message}");
-                    }
-                }
-                
-                GUILayout.EndHorizontal();
-                
-                GUILayout.FlexibleSpace();
-                
-                if (GUILayout.Button("Close", GUILayout.Height(30)))
-                {
-                    _showExportPathSelector = false;
-                }
-                
-                GUILayout.EndVertical();
-                
-                GUI.DragWindow();
-            }, "Select Export Path");
         }
         
-        // Baker window code integrated from TransformIdBaker
+        // Changed method signature to match window callback pattern
+        private void DrawExportPathSelectorWindow(int id)
+        {
+            GUILayout.BeginVertical();
+            
+            GUILayout.Label("Select Export Directory", GUI.skin.box);
+            
+            // List common paths
+            GUILayout.Label("Common Paths:");
+            
+            if (GUILayout.Button("Plugin Directory"))
+            {
+                _exportBasePath = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
+            }
+            
+            if (GUILayout.Button("Game Directory"))
+            {
+                _exportBasePath = Path.Combine(Paths.GameRootPath, "Exports");
+            }
+            
+            if (GUILayout.Button("Desktop"))
+            {
+                _exportBasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "TransformCacher_Exports");
+            }
+            
+            if (GUILayout.Button("My Documents"))
+            {
+                _exportBasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "TransformCacher_Exports");
+            }
+            
+            GUILayout.Space(10);
+            
+            // Custom path entry
+            GUILayout.Label("Custom Path:");
+            
+            _exportPathScrollPosition = GUILayout.BeginScrollView(_exportPathScrollPosition, GUILayout.Height(100));
+            _exportBasePath = GUILayout.TextArea(_exportBasePath, GUILayout.ExpandWidth(true), GUILayout.Height(60));
+            GUILayout.EndScrollView();
+            
+            // Test and create path
+            GUILayout.BeginHorizontal();
+            
+            if (GUILayout.Button("Test Path"))
+            {
+                try
+                {
+                    bool exists = Directory.Exists(_exportBasePath);
+                    GUILayout.Label(exists ? "Path exists" : "Path doesn't exist");
+                }
+                catch (Exception ex)
+                {
+                    TransformCacherPlugin.Log.LogError($"Error checking path: {ex.Message}");
+                }
+            }
+            
+            if (GUILayout.Button("Create Directory"))
+            {
+                try
+                {
+                    Directory.CreateDirectory(_exportBasePath);
+                    TransformCacherPlugin.Log.LogInfo($"Created directory: {_exportBasePath}");
+                }
+                catch (Exception ex)
+                {
+                    TransformCacherPlugin.Log.LogError($"Error creating directory: {ex.Message}");
+                }
+            }
+            
+            GUILayout.EndHorizontal();
+            
+            GUILayout.FlexibleSpace();
+            
+            if (GUILayout.Button("Close", GUILayout.Height(30)))
+            {
+                _showExportPathSelector = false;
+            }
+            
+            GUILayout.EndVertical();
+            
+            GUI.DragWindow();
+        }
+        
         private void DrawBakerWindow(int id)
         {
             GUILayout.BeginVertical();
@@ -876,8 +922,11 @@ namespace TransformCacher
             if (isSceneBaked)
             {
                 var sceneBakedIds = _databaseManager.GetBakedIdsDatabase();
-                int count = sceneBakedIds[currentScene.name].Count;
-                bakeStatus += $" ({count} objects)";
+                if (sceneBakedIds.ContainsKey(currentScene.name))
+                {
+                    int count = sceneBakedIds[currentScene.name].Count;
+                    bakeStatus += $" ({count} objects)";
+                }
             }
             
             GUILayout.Label($"Bake Status: {bakeStatus}", new GUIStyle(GUI.skin.label) { richText = true });
@@ -984,16 +1033,31 @@ namespace TransformCacher
             // Database statistics
             GUILayout.Label("Database Statistics", GUI.skin.box);
             
-            _bakerScrollPosition = GUILayout.BeginScrollView(_bakerScrollPosition);
+            _bakerScrollPosition = GUILayout.BeginScrollView(_bakerScrollPosition, GUILayout.Height(150));
             
-            // Get baked IDs database from database manager
-            var currentBakedIdsDb = _databaseManager.GetBakedIdsDatabase();
-            
-            // Show scenes with baked IDs
-            foreach (var scene in currentBakedIdsDb.Keys)
+            try
             {
-                int count = currentBakedIdsDb[scene].Count;
-                GUILayout.Label($"Scene '{scene}': {count} objects");
+                // Get baked IDs database from database manager
+                var currentBakedIdsDb = _databaseManager.GetBakedIdsDatabase();
+                
+                // Show scenes with baked IDs
+                if (currentBakedIdsDb != null && currentBakedIdsDb.Count > 0)
+                {
+                    foreach (var scene in currentBakedIdsDb.Keys)
+                    {
+                        int count = currentBakedIdsDb[scene].Count;
+                        GUILayout.Label($"Scene '{scene}': {count} objects");
+                    }
+                }
+                else
+                {
+                    GUILayout.Label("No scenes have been baked yet");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error displaying baked database: {ex.Message}");
+                GUILayout.Label("Error displaying baked database");
             }
             
             GUILayout.EndScrollView();
@@ -1016,17 +1080,27 @@ namespace TransformCacher
         {
             var result = new HashSet<GameObject>();
             
-            // Get currently inspected object
-            GameObject currentObject = _transformCacher.GetCurrentInspectedObject();
-            if (currentObject != null)
+            try
             {
-                result.Add(currentObject);
-                
-                // Add children if needed
-                if (_includeChildren)
+                // Get currently inspected object
+                if (_transformCacher != null)
                 {
-                    AddChildrenRecursively(currentObject.transform, result);
+                    GameObject currentObject = _transformCacher.GetCurrentInspectedObject();
+                    if (currentObject != null)
+                    {
+                        result.Add(currentObject);
+                        
+                        // Add children if needed
+                        if (_includeChildren)
+                        {
+                            AddChildrenRecursively(currentObject.transform, result);
+                        }
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error getting objects to export: {ex.Message}");
             }
             
             return result;
@@ -1034,17 +1108,30 @@ namespace TransformCacher
         
         private void AddChildrenRecursively(Transform parent, HashSet<GameObject> collection)
         {
-            // Avoid using Stack to prevent reference errors
-            List<Transform> children = new List<Transform>();
-            foreach (Transform child in parent)
-            {
-                children.Add(child);
-            }
+            if (parent == null) return;
             
-            foreach (var child in children)
+            try
             {
-                collection.Add(child.gameObject);
-                AddChildrenRecursively(child, collection);
+                // Avoid using Stack to prevent reference errors
+                List<Transform> children = new List<Transform>();
+                foreach (Transform child in parent)
+                {
+                    if (child != null)
+                        children.Add(child);
+                }
+                
+                foreach (var child in children)
+                {
+                    if (child != null && child.gameObject != null)
+                    {
+                        collection.Add(child.gameObject);
+                        AddChildrenRecursively(child, collection);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error adding children recursively: {ex.Message}");
             }
         }
         
