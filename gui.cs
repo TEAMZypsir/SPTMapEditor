@@ -71,24 +71,94 @@ namespace TransformCacher
         
         public void Initialize(TransformCacher transformCacher, DatabaseManager databaseManager, TransformIdBaker idBaker)
         {
-            _transformCacher = transformCacher;
-            _databaseManager = databaseManager;
-            _idBaker = idBaker;
-            
-            // Get logger
-            Logger = BepInEx.Logging.Logger.CreateLogSource("TransformCacherGUI");
-            
-            // Set default export path
-            if (TransformCacherPlugin.DefaultExportPath != null && !string.IsNullOrEmpty(TransformCacherPlugin.DefaultExportPath.Value))
+            try
             {
-                _exportBasePath = TransformCacherPlugin.DefaultExportPath.Value;
+                _transformCacher = transformCacher;
+                _databaseManager = databaseManager;
+                _idBaker = idBaker;
+                
+                // Add debug log to verify component references
+                if (_transformCacher == null)
+                {
+                    Logger.LogError("TransformCacher reference is null during initialization");
+                }
+                
+                if (_databaseManager == null)
+                {
+                    Logger.LogError("DatabaseManager reference is null during initialization");
+                }
+                
+                if (_idBaker == null)
+                {
+                    Logger.LogError("TransformIdBaker reference is null during initialization");
+                    
+                    // Try to find it in the scene if it wasn't passed correctly
+                    _idBaker = FindObjectOfType<TransformIdBaker>();
+                    
+                    if (_idBaker == null)
+                    {
+                        Logger.LogError("Failed to find TransformIdBaker in the scene");
+                        
+                        // Create one as a last resort
+                        GameObject idBakerObj = new GameObject("TransformIdBaker");
+                        _idBaker = idBakerObj.AddComponent<TransformIdBaker>();
+                        
+                        if (_idBaker != null)
+                        {
+                            _idBaker.Initialize();
+                            Logger.LogWarning("Created new TransformIdBaker as fallback");
+                        }
+                        else
+                        {
+                            Logger.LogError("Failed to create TransformIdBaker component");
+                        }
+                    }
+                    else
+                    {
+                        Logger.LogWarning("Found TransformIdBaker in scene instead of passed reference");
+                    }
+                }
+                
+                // Get logger
+                Logger = BepInEx.Logging.Logger.CreateLogSource("TransformCacherGUI");
+                
+                // Set default export path
+                if (TransformCacherPlugin.DefaultExportPath != null && !string.IsNullOrEmpty(TransformCacherPlugin.DefaultExportPath.Value))
+                {
+                    _exportBasePath = TransformCacherPlugin.DefaultExportPath.Value;
+                }
+                else
+                {
+                    _exportBasePath = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
+                }
+                
+                // Ensure export directory exists
+                try 
+                {
+                    if (!Directory.Exists(_exportBasePath))
+                    {
+                        Directory.CreateDirectory(_exportBasePath);
+                        Logger.LogInfo($"Created export directory: {_exportBasePath}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError($"Failed to create export directory: {ex.Message}");
+                }
+                
+                Logger.LogInfo("TransformCacherGUI initialized successfully");
             }
-            else
+            catch (Exception ex)
             {
-                _exportBasePath = Path.Combine(Paths.PluginPath, "TransformCacher", "Exports");
+                if (Logger != null)
+                {
+                    Logger.LogError($"Error during TransformCacherGUI initialization: {ex.Message}\n{ex.StackTrace}");
+                }
+                else
+                {
+                    Debug.LogError($"Error during TransformCacherGUI initialization: {ex.Message}\n{ex.StackTrace}");
+                }
             }
-            
-            Logger.LogInfo("TransformCacherGUI initialized successfully");
         }
         
         public void OnGUI()
@@ -198,311 +268,333 @@ namespace TransformCacher
         {
             try
             {
-                // Begin scrollable area
-                _mainWindowScrollPosition = GUILayout.BeginScrollView(_mainWindowScrollPosition);
-                
                 try
                 {
-                    GUILayout.Label("Object Actions", GUI.skin.box);
-                    
-                    // Tagging and saving - with null checks
-                    if (GUILayout.Button("Save All Tagged Objects", GUILayout.Height(30)) && _transformCacher != null)
+                    // Begin scrollable area with try/finally to ensure proper closing
+                    _mainWindowScrollPosition = GUILayout.BeginScrollView(_mainWindowScrollPosition);
+                    try
                     {
-                        _transformCacher.SaveAllTaggedObjects();
-                    }
-
-                    if (GUILayout.Button("Tag Inspected Object", GUILayout.Height(30)) && _transformCacher != null)
-                    {
-                        GameObject currentInspectedObject = _transformCacher.GetCurrentInspectedObject();
-                        if (currentInspectedObject != null)
-                            _transformCacher.TagObject(currentInspectedObject);
-                        else
-                            Logger.LogInfo("No object currently inspected");
-                    }
-                    
-                    if (GUILayout.Button("Destroy Inspected Object", GUILayout.Height(30)) && _transformCacher != null)
-                    {
-                        GameObject currentInspectedObject = _transformCacher.GetCurrentInspectedObject();
-                        if (currentInspectedObject != null)
-                            _transformCacher.MarkForDestruction(currentInspectedObject);
-                        else
-                            Logger.LogInfo("No object currently inspected");
-                    }
-                    
-                    if (GUILayout.Button("Open Prefab Selector", GUILayout.Height(30)))
-                    {
-                        _showPrefabSelector = !_showPrefabSelector;
-                        if (_showPrefabSelector && _transformCacher != null && !_transformCacher.ArePrefabsLoaded())
+                        // Object Actions section
+                        GUILayout.Label("Object Actions", GUI.skin.box);
+                        
+                        // Tagging and saving - with null checks
+                        if (GUILayout.Button("Save All Tagged Objects", GUILayout.Height(30)) && _transformCacher != null)
                         {
-                            _transformCacher.StartCoroutine(_transformCacher.LoadPrefabs());
+                            _transformCacher.SaveAllTaggedObjects();
                         }
-                    }
-                    
-                    if (GUILayout.Button("Force Apply Transforms", GUILayout.Height(30)) && _transformCacher != null)
-                    {
-                        Scene currentScene = SceneManager.GetActiveScene();
-                        _transformCacher.ResetTransformApplicationAttempts();
-                        _transformCacher.StartCoroutine(_transformCacher.ApplyTransformsWithRetry(currentScene));
-                    }
-                    
-                    if (_idBaker != null && GUILayout.Button("Open ID Baker", GUILayout.Height(30)))
-                    {
-                        _showBakerWindow = !_showBakerWindow;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogError($"Error in action buttons: {ex.Message}");
-                }
-                
-                try
-                {
-                    GUILayout.Space(20);
-                    
-                    // Information section
-                    GUILayout.Label("Information", GUI.skin.box);
-                    
-                    // Add null checks for all config entries
-                    if (TransformCacherPlugin.SaveHotkey != null)
-                        GUILayout.Label($"Save Hotkey: {TransformCacherPlugin.SaveHotkey.Value.ToString()}");
-                    else
-                        GUILayout.Label("Save Hotkey: N/A");
-                        
-                    if (TransformCacherPlugin.TagHotkey != null)
-                        GUILayout.Label($"Tag Hotkey: {TransformCacherPlugin.TagHotkey.Value.ToString()}");
-                    else
-                        GUILayout.Label("Tag Hotkey: N/A");
-                        
-                    if (TransformCacherPlugin.DestroyHotkey != null)
-                        GUILayout.Label($"Destroy Hotkey: {TransformCacherPlugin.DestroyHotkey.Value.ToString()}");
-                    else
-                        GUILayout.Label("Destroy Hotkey: N/A");
-                        
-                    if (TransformCacherPlugin.SpawnHotkey != null)
-                        GUILayout.Label($"Spawn Hotkey: {TransformCacherPlugin.SpawnHotkey.Value.ToString()}");
-                    else
-                        GUILayout.Label("Spawn Hotkey: N/A");
-                        
-                    if (TransformCacherPlugin.MouseToggleHotkey != null)
-                        GUILayout.Label($"Mouse Toggle Hotkey: {TransformCacherPlugin.MouseToggleHotkey.Value.ToString()}");
-                    else
-                        GUILayout.Label("Mouse Toggle Hotkey: N/A");
-                        
-                    if (_transformCacher != null)
-                        GUILayout.Label($"Current Scene: {_transformCacher.GetCurrentScene() ?? "Unknown"}");
-                    else
-                        GUILayout.Label("Current Scene: Unknown");
-                        
-                    if (_transformCacher != null)
-                        GUILayout.Label($"Mouse Focus: {(_transformCacher.IsUIFocused() ? "UI" : "Game")}");
-                    else
-                        GUILayout.Label("Mouse Focus: Unknown");
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogError($"Error in information section: {ex.Message}");
-                }
-                
-                try
-                {
-                    GUILayout.Space(10);
-                    
-                    // Inspected object info
-                    if (_transformCacher != null)
-                    {
-                        GameObject currentInspectedObjectInfo = _transformCacher.GetCurrentInspectedObject();
-                        if (currentInspectedObjectInfo != null)
+
+                        if (GUILayout.Button("Tag Inspected Object", GUILayout.Height(30)) && _transformCacher != null)
                         {
-                            string uniqueId = FixUtility.GenerateUniqueId(currentInspectedObjectInfo.transform);
-                            string pathId = FixUtility.GeneratePathID(currentInspectedObjectInfo.transform);
-                            string itemId = FixUtility.GenerateItemID(currentInspectedObjectInfo.transform);
-                            
-                            GUILayout.Label($"Selected: {currentInspectedObjectInfo.name}");
-                            GUILayout.Label($"UniqueId: {uniqueId}");
-                            GUILayout.Label($"PathID: {pathId}");
-                            GUILayout.Label($"ItemID: {itemId}");
-                            
-                            // Display its transform
-                            GUILayout.Label($"Position: {currentInspectedObjectInfo.transform.position}");
-                            GUILayout.Label($"Rotation: {currentInspectedObjectInfo.transform.eulerAngles}");
-                            GUILayout.Label($"Scale: {currentInspectedObjectInfo.transform.localScale}");
-                            
-                            // Check if it's tagged
-                            TransformCacherTag tag = currentInspectedObjectInfo.GetComponent<TransformCacherTag>();
-                            if (tag != null)
+                            GameObject currentInspectedObject = _transformCacher.GetCurrentInspectedObject();
+                            if (currentInspectedObject != null)
+                                _transformCacher.TagObject(currentInspectedObject);
+                            else
+                                Logger.LogInfo("No object currently inspected");
+                        }
+                        
+                        if (GUILayout.Button("Destroy Inspected Object", GUILayout.Height(30)) && _transformCacher != null)
+                        {
+                            GameObject currentInspectedObject = _transformCacher.GetCurrentInspectedObject();
+                            if (currentInspectedObject != null)
+                                _transformCacher.MarkForDestruction(currentInspectedObject);
+                            else
+                                Logger.LogInfo("No object currently inspected");
+                        }
+                        
+                        if (GUILayout.Button("Open Prefab Selector", GUILayout.Height(30)))
+                        {
+                            _showPrefabSelector = !_showPrefabSelector;
+                            if (_showPrefabSelector && _transformCacher != null && !_transformCacher.ArePrefabsLoaded())
                             {
-                                GUILayout.Label($"Tagged: YES");
-                                GUILayout.Label($"Is Destroyed: {tag.IsDestroyed}");
-                                GUILayout.Label($"Is Spawned: {tag.IsSpawned}");
+                                _transformCacher.StartCoroutine(_transformCacher.LoadPrefabs());
+                            }
+                        }
+                        
+                        if (GUILayout.Button("Force Apply Transforms", GUILayout.Height(30)) && _transformCacher != null)
+                        {
+                            Scene currentScene = SceneManager.GetActiveScene();
+                            _transformCacher.ResetTransformApplicationAttempts();
+                            _transformCacher.StartCoroutine(_transformCacher.ApplyTransformsWithRetry(currentScene));
+                        }
+                        
+                        // Always display ID Baker button, but disable if _idBaker is null
+                        GUI.enabled = _idBaker != null;
+                        if (GUILayout.Button("Open ID Baker", GUILayout.Height(30)))
+                        {
+                            _showBakerWindow = !_showBakerWindow;
+                        }
+                        GUI.enabled = true; // Reset enabled state
+
+                        GUILayout.Space(20);
+                        
+                        // Information section
+                        GUILayout.Label("Information", GUI.skin.box);
+                        
+                        // Add null checks for all config entries
+                        if (TransformCacherPlugin.SaveHotkey != null)
+                            GUILayout.Label($"Save Hotkey: {TransformCacherPlugin.SaveHotkey.Value.ToString()}");
+                        else
+                            GUILayout.Label("Save Hotkey: N/A");
+                            
+                        if (TransformCacherPlugin.TagHotkey != null)
+                            GUILayout.Label($"Tag Hotkey: {TransformCacherPlugin.TagHotkey.Value.ToString()}");
+                        else
+                            GUILayout.Label("Tag Hotkey: N/A");
+                            
+                        if (TransformCacherPlugin.DestroyHotkey != null)
+                            GUILayout.Label($"Destroy Hotkey: {TransformCacherPlugin.DestroyHotkey.Value.ToString()}");
+                        else
+                            GUILayout.Label("Destroy Hotkey: N/A");
+                            
+                        if (TransformCacherPlugin.SpawnHotkey != null)
+                            GUILayout.Label($"Spawn Hotkey: {TransformCacherPlugin.SpawnHotkey.Value.ToString()}");
+                        else
+                            GUILayout.Label("Spawn Hotkey: N/A");
+                            
+                        if (TransformCacherPlugin.MouseToggleHotkey != null)
+                            GUILayout.Label($"Mouse Toggle Hotkey: {TransformCacherPlugin.MouseToggleHotkey.Value.ToString()}");
+                        else
+                            GUILayout.Label("Mouse Toggle Hotkey: N/A");
+                            
+                        if (_transformCacher != null)
+                            GUILayout.Label($"Current Scene: {_transformCacher.GetCurrentScene() ?? "Unknown"}");
+                        else
+                            GUILayout.Label("Current Scene: Unknown");
+                            
+                        if (_transformCacher != null)
+                            GUILayout.Label($"Mouse Focus: {(_transformCacher.IsUIFocused() ? "UI" : "Game")}");
+                        else
+                            GUILayout.Label("Mouse Focus: Unknown");
+
+                        GUILayout.Space(10);
+                        
+                        // Inspected object info
+                        if (_transformCacher != null)
+                        {
+                            GameObject currentInspectedObjectInfo = _transformCacher.GetCurrentInspectedObject();
+                            if (currentInspectedObjectInfo != null)
+                            {
+                                string uniqueId = FixUtility.GenerateUniqueId(currentInspectedObjectInfo.transform);
+                                string pathId = FixUtility.GeneratePathID(currentInspectedObjectInfo.transform);
+                                string itemId = FixUtility.GenerateItemID(currentInspectedObjectInfo.transform);
+                                
+                                GUILayout.Label($"Selected: {currentInspectedObjectInfo.name}");
+                                GUILayout.Label($"UniqueId: {uniqueId}");
+                                GUILayout.Label($"PathID: {pathId}");
+                                GUILayout.Label($"ItemID: {itemId}");
+                                
+                                // Display its transform
+                                GUILayout.Label($"Position: {currentInspectedObjectInfo.transform.position}");
+                                GUILayout.Label($"Rotation: {currentInspectedObjectInfo.transform.eulerAngles}");
+                                GUILayout.Label($"Scale: {currentInspectedObjectInfo.transform.localScale}");
+                                
+                                // Check if it's tagged
+                                TransformCacherTag tag = currentInspectedObjectInfo.GetComponent<TransformCacherTag>();
+                                if (tag != null)
+                                {
+                                    GUILayout.Label($"Tagged: YES");
+                                    GUILayout.Label($"Is Destroyed: {tag.IsDestroyed}");
+                                    GUILayout.Label($"Is Spawned: {tag.IsSpawned}");
+                                }
+                                else
+                                {
+                                    GUILayout.Label($"Tagged: NO");
+                                }
                             }
                             else
                             {
-                                GUILayout.Label($"Tagged: NO");
+                                GUILayout.Label("No object currently selected");
                             }
                         }
                         else
                         {
-                            GUILayout.Label("No object currently selected");
+                            GUILayout.Label("Transform cacher not initialized");
                         }
-                    }
-                    else
-                    {
-                        GUILayout.Label("Transform cacher not initialized");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogError($"Error in object info section: {ex.Message}");
-                }
-                
-                try
-                {
-                    GUILayout.Space(20);
-                    
-                    // Database stats header
-                    GUILayout.Label("Database Statistics", GUI.skin.box);
-                    
-                    // Use a simple, consistent display that won't change between layout and repaint
-                    if (_databaseManager == null)
-                    {
-                        GUILayout.Label("Database manager not initialized");
-                    }
-                    else
-                    {
-                        // Get database safely
-                        Dictionary<string, Dictionary<string, TransformData>> transformsDb = null;
+
+                        GUILayout.Space(20);
                         
+                        // Database stats section with improved error handling
                         try
                         {
-                            transformsDb = _databaseManager.GetTransformsDatabase();
+                            // Database stats header
+                            GUILayout.Label("Database Statistics", GUI.skin.box);
                             
-                            if (transformsDb == null || transformsDb.Count == 0)
+                            // Use a simple, consistent display that won't change between layout and repaint
+                            if (_databaseManager == null)
                             {
-                                GUILayout.Label("No database entries found");
+                                GUILayout.Label("Database manager not initialized");
                             }
                             else
                             {
-                                // Display a fixed format summary instead of dynamic per-scene entries
-                                int totalScenes = 0;
-                                int totalObjects = 0;
-                                int totalDestroyed = 0;
-                                int totalSpawned = 0;
+                                // Get database safely
+                                Dictionary<string, Dictionary<string, TransformData>> transformsDb = null;
                                 
-                                foreach (var sceneEntry in transformsDb)
+                                try
                                 {
-                                    if (sceneEntry.Value != null)
+                                    transformsDb = _databaseManager.GetTransformsDatabase();
+                                    
+                                    if (transformsDb == null || transformsDb.Count == 0)
                                     {
-                                        totalScenes++;
-                                        totalObjects += sceneEntry.Value.Count;
+                                        GUILayout.Label("No database entries found");
+                                    }
+                                    else
+                                    {
+                                        // Display a fixed format summary instead of dynamic per-scene entries
+                                        int totalScenes = 0;
+                                        int totalObjects = 0;
+                                        int totalDestroyed = 0;
+                                        int totalSpawned = 0;
                                         
-                                        foreach (var dataEntry in sceneEntry.Value.Values)
+                                        foreach (var sceneEntry in transformsDb)
                                         {
-                                            if (dataEntry != null)
+                                            if (sceneEntry.Value != null)
                                             {
-                                                if (dataEntry.IsDestroyed) totalDestroyed++;
-                                                if (dataEntry.IsSpawned) totalSpawned++;
+                                                totalScenes++;
+                                                totalObjects += sceneEntry.Value.Count;
+                                                
+                                                foreach (var dataEntry in sceneEntry.Value.Values)
+                                                {
+                                                    if (dataEntry != null)
+                                                    {
+                                                        if (dataEntry.IsDestroyed) totalDestroyed++;
+                                                        if (dataEntry.IsSpawned) totalSpawned++;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Display summary stats - consistent across layout/repaint
+                                        GUILayout.Label($"Total Scenes: {totalScenes}");
+                                        GUILayout.Label($"Total Objects: {totalObjects}");
+                                        GUILayout.Label($"Destroyed Objects: {totalDestroyed}");
+                                        GUILayout.Label($"Spawned Objects: {totalSpawned}");
+                                        
+                                        // Show one scene at a time with a selector to avoid dynamic GUI changes
+                                        if (totalScenes > 0)
+                                        {
+                                            List<string> sceneKeys = new List<string>(transformsDb.Keys);
+                                            string[] sceneNames = sceneKeys.ToArray();
+                                            
+                                            // Static index for scene selection
+                                            if (_selectedSceneIndex >= sceneNames.Length)
+                                                _selectedSceneIndex = 0;
+                                            
+                                            // Scene selector
+                                            GUILayout.Space(10);
+                                            GUILayout.Label("Scene Details:", GUI.skin.box);
+                                            
+                                            // Previous/Next buttons for scene selection
+                                            try
+                                            {
+                                                GUILayout.BeginHorizontal();
+                                                try
+                                                {
+                                                    if (GUILayout.Button("◄ Prev", GUILayout.Width(70)))
+                                                    {
+                                                        _selectedSceneIndex--;
+                                                        if (_selectedSceneIndex < 0)
+                                                            _selectedSceneIndex = sceneNames.Length - 1;
+                                                    }
+                                                    
+                                                    // Center scene name
+                                                    GUILayout.FlexibleSpace();
+                                                    GUILayout.Label(sceneNames[_selectedSceneIndex], GUILayout.Width(150));
+                                                    GUILayout.FlexibleSpace();
+                                                    
+                                                    if (GUILayout.Button("Next ►", GUILayout.Width(70)))
+                                                    {
+                                                        _selectedSceneIndex++;
+                                                        if (_selectedSceneIndex >= sceneNames.Length)
+                                                            _selectedSceneIndex = 0;
+                                                    }
+                                                }
+                                                finally
+                                                {
+                                                    GUILayout.EndHorizontal();
+                                                }
+                                                
+                                                // Display scene stats
+                                                string selectedScene = sceneNames[_selectedSceneIndex];
+                                                if (!string.IsNullOrEmpty(selectedScene) && transformsDb.ContainsKey(selectedScene))
+                                                {
+                                                    var sceneData = transformsDb[selectedScene];
+                                                    
+                                                    if (sceneData != null)
+                                                    {
+                                                        int sceneObjects = sceneData.Count;
+                                                        int sceneDestroyed = 0;
+                                                        int sceneSpawned = 0;
+                                                        
+                                                        foreach (var data in sceneData.Values)
+                                                        {
+                                                            if (data != null)
+                                                            {
+                                                                if (data.IsDestroyed) sceneDestroyed++;
+                                                                if (data.IsSpawned) sceneSpawned++;
+                                                            }
+                                                        }
+                                                        
+                                                        GUILayout.Label($"Objects: {sceneObjects}");
+                                                        GUILayout.Label($"Destroyed: {sceneDestroyed}");
+                                                        GUILayout.Label($"Spawned: {sceneSpawned}");
+                                                    }
+                                                    else
+                                                    {
+                                                        GUILayout.Label("Scene data is null");
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    GUILayout.Label("Invalid scene selection");
+                                                }
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                Logger.LogError($"Error displaying scene details: {ex.Message}");
+                                                GUILayout.Label("Error displaying scene details");
                                             }
                                         }
                                     }
                                 }
-                                
-                                // Display summary stats - consistent across layout/repaint
-                                GUILayout.Label($"Total Scenes: {totalScenes}");
-                                GUILayout.Label($"Total Objects: {totalObjects}");
-                                GUILayout.Label($"Destroyed Objects: {totalDestroyed}");
-                                GUILayout.Label($"Spawned Objects: {totalSpawned}");
-                                
-                                // Show one scene at a time with a selector to avoid dynamic GUI changes
-                                if (totalScenes > 0)
+                                catch (Exception ex)
                                 {
-                                    string[] sceneNames = transformsDb.Keys.ToArray();
-                                    
-                                    // Static index for scene selection
-                                    if (_selectedSceneIndex >= sceneNames.Length)
-                                        _selectedSceneIndex = 0;
-                                    
-                                    // Scene selector
-                                    GUILayout.Space(10);
-                                    GUILayout.Label("Scene Details:", GUI.skin.box);
-                                    
-                                    // Previous/Next buttons for scene selection
-                                    GUILayout.BeginHorizontal();
-                                    
-                                    if (GUILayout.Button("◄ Prev", GUILayout.Width(70)))
-                                    {
-                                        _selectedSceneIndex--;
-                                        if (_selectedSceneIndex < 0)
-                                            _selectedSceneIndex = sceneNames.Length - 1;
-                                    }
-                                    
-                                    // Center scene name
-                                    GUILayout.FlexibleSpace();
-                                    GUILayout.Label(sceneNames[_selectedSceneIndex], GUILayout.Width(150));
-                                    GUILayout.FlexibleSpace();
-                                    
-                                    if (GUILayout.Button("Next ►", GUILayout.Width(70)))
-                                    {
-                                        _selectedSceneIndex++;
-                                        if (_selectedSceneIndex >= sceneNames.Length)
-                                            _selectedSceneIndex = 0;
-                                    }
-                                    
-                                    GUILayout.EndHorizontal();
-                                    
-                                    // Display scene stats
-                                    string selectedScene = sceneNames[_selectedSceneIndex];
-                                    var sceneData = transformsDb[selectedScene];
-                                    
-                                    int sceneObjects = sceneData.Count;
-                                    int sceneDestroyed = 0;
-                                    int sceneSpawned = 0;
-                                    
-                                    foreach (var data in sceneData.Values)
-                                    {
-                                        if (data != null)
-                                        {
-                                            if (data.IsDestroyed) sceneDestroyed++;
-                                            if (data.IsSpawned) sceneSpawned++;
-                                        }
-                                    }
-                                    
-                                    GUILayout.Label($"Objects: {sceneObjects}");
-                                    GUILayout.Label($"Destroyed: {sceneDestroyed}");
-                                    GUILayout.Label($"Spawned: {sceneSpawned}");
+                                    Logger.LogError($"Error accessing database: {ex.Message}");
+                                    GUILayout.Label("Error accessing database");
                                 }
                             }
                         }
                         catch (Exception ex)
                         {
-                            Logger.LogError($"Error accessing database: {ex.Message}");
-                            GUILayout.Label("Error accessing database");
+                            Logger.LogError($"Error in database section: {ex.Message}");
+                            GUILayout.Label("Error displaying database statistics");
                         }
                     }
+                    finally
+                    {
+                        // Always end the scroll view to avoid layout errors
+                        GUILayout.EndScrollView();
+                    }
+                    
+                    // Draw resize handle in the bottom-right corner
+                    _resizeHandle = new Rect(_windowRect.width - 15, _windowRect.height - 15, 15, 15);
+                    GUI.Box(_resizeHandle, "↘");
+                    
+                    // Allow the window to be dragged (but only from the top bar)
+                    GUI.DragWindow(new Rect(0, 0, _windowRect.width, 20));
+                    
+                    // Handle resize
+                    HandleResizing();
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogError($"Error in database section: {ex.Message}");
-                    GUILayout.Label("Error displaying database statistics");
+                    // In case of a catastrophic error in the main body
+                    Logger.LogError($"Error in GUI main drawing: {ex.Message}\n{ex.StackTrace}");
                 }
-                
-                // Always end the scroll view to avoid layout errors
-                GUILayout.EndScrollView();
-                
-                // Draw resize handle in the bottom-right corner
-                _resizeHandle = new Rect(_windowRect.width - 15, _windowRect.height - 15, 15, 15);
-                GUI.Box(_resizeHandle, "↘");
-                
-                // Allow the window to be dragged (but only from the top bar)
-                GUI.DragWindow(new Rect(0, 0, _windowRect.width, 20));
-                
-                // Handle resize
-                HandleResizing();
             }
             catch (Exception ex)
             {
-                // In case of a catastrophic error, still ensure the scroll view is ended
-                try { GUILayout.EndScrollView(); } catch { }
-                Logger.LogError($"Error in DrawMainWindow: {ex.Message}\n{ex.StackTrace}");
+                // Outermost error handler for truly unexpected errors
+                Logger.LogError($"Critical error in DrawMainWindow: {ex.Message}\n{ex.StackTrace}");
             }
         }
         
