@@ -1719,19 +1719,71 @@ namespace TransformCacher
             // Wait until end of frame to ensure all objects are fully loaded
             yield return new WaitForEndOfFrame();
             
-            string sceneName = scene.name;
+            // Declare variables outside the try block to avoid redeclaration issues
+            string sceneName = null;
+            Dictionary<string, Dictionary<string, TransformData>> transformsDb = null;
+            int totalObjects = 0;
+            bool shouldContinue = true;
             
-            // Get the transforms database
-            var transformsDb = _databaseManager.GetTransformsDatabase();
-            
-            if (!transformsDb.ContainsKey(sceneName) || transformsDb[sceneName].Count == 0)
+            try
             {
-                Logger.LogInfo($"No saved transforms for scene: {sceneName}");
-                callback(true); // Success (nothing to do)
+                // Safe guard against null or empty scene name
+                sceneName = scene.name;
+                if (string.IsNullOrEmpty(sceneName))
+                {
+                    Logger.LogError("Scene name is null or empty, cannot apply transforms");
+                    callback(false); // Failure
+                    shouldContinue = false;
+                }
+                
+                // Check if database manager is valid
+                if (_databaseManager == null)
+                {
+                    Logger.LogError("DatabaseManager is null, cannot apply transforms");
+                    callback(false); // Failure
+                    shouldContinue = false;
+                }
+                
+                // Get the transforms database with defensive null checking
+                if (shouldContinue)
+                {
+                    transformsDb = _databaseManager.GetTransformsDatabase();
+                    if (transformsDb == null)
+                    {
+                        Logger.LogError("Transforms database is null, cannot apply transforms");
+                        callback(false); // Failure
+                        shouldContinue = false;
+                    }
+                }
+                
+                // Check if we have transforms for this scene
+                if (shouldContinue && (!transformsDb.ContainsKey(sceneName) || transformsDb[sceneName] == null || transformsDb[sceneName].Count == 0))
+                {
+                    Logger.LogInfo($"No saved transforms for scene: {sceneName}");
+                    callback(true); // Success (nothing to do)
+                    shouldContinue = false;
+                }
+                
+                // Set total objects count if continuing
+                if (shouldContinue)
+                {
+                    totalObjects = transformsDb[sceneName].Count;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error initializing ApplyTransformsToScene: {ex.Message}\n{ex.StackTrace}");
+                callback(false); // Failure
+                shouldContinue = false;
+            }
+            
+            // Exit early if initialization failed
+            if (!shouldContinue)
+            {
                 yield break;
             }
             
-            int totalObjects = transformsDb[sceneName].Count;
+            // Now we have verified sceneName, transformsDb, and totalObjects are valid
             int appliedCount = 0;
             _isApplyingTransform = true;
             
@@ -1746,221 +1798,261 @@ namespace TransformCacher
             var objectsByPathId = new Dictionary<string, GameObject>();
             var objectsByItemId = new Dictionary<string, GameObject>();
             
+            // Build lookup dictionaries
             foreach (var obj in allObjects)
             {
+                if (obj == null) continue;
+                
                 try
                 {
                     // By path
                     string path = FixUtility.GetFullPath(obj.transform);
-                    objectsByPath[path] = obj;
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        objectsByPath[path] = obj;
+                    }
                     
                     // By name
                     string name = obj.name;
-                    if (!objectsByName.ContainsKey(name))
-                        objectsByName[name] = new List<GameObject>();
-                    objectsByName[name].Add(obj);
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        if (!objectsByName.ContainsKey(name))
+                            objectsByName[name] = new List<GameObject>();
+                        objectsByName[name].Add(obj);
+                    }
                     
                     // By sibling path
                     string siblingPath = FixUtility.GetSiblingIndicesPath(obj.transform);
-                    objectsBySiblingPath[siblingPath] = obj;
+                    if (!string.IsNullOrEmpty(siblingPath))
+                    {
+                        objectsBySiblingPath[siblingPath] = obj;
+                    }
                     
                     // By path ID and item ID
                     string pathId = FixUtility.GeneratePathID(obj.transform);
                     string itemId = FixUtility.GenerateItemID(obj.transform);
                     
-                    objectsByPathId[pathId] = obj;
-                    objectsByItemId[itemId] = obj;
+                    if (!string.IsNullOrEmpty(pathId))
+                    {
+                        objectsByPathId[pathId] = obj;
+                    }
+                    
+                    if (!string.IsNullOrEmpty(itemId))
+                    {
+                        objectsByItemId[itemId] = obj;
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
                     // Skip problematic objects
-                    continue;
+                    Logger.LogWarning($"Error processing object for lookup: {ex.Message}");
                 }
             }
             
             // Apply transforms - log detailed information about the process
-            foreach (var entry in transformsDb[sceneName])
+            if (transformsDb[sceneName] != null)
             {
-                var data = entry.Value;
-                
-                // Skip destroyed objects
-                if (data.IsDestroyed)
+                foreach (var entry in transformsDb[sceneName])
                 {
-                    Logger.LogInfo($"Skipping destroyed object: {data.ObjectPath}");
-                    appliedCount++; // Count as applied
-                    continue;
-                }
-                
-                // Skip spawned objects (they'll be handled separately)
-                if (data.IsSpawned)
-                {
-                    Logger.LogInfo($"Skipping spawned object: {data.ObjectPath} (will be handled separately)");
-                    appliedCount++; // Count as applied
-                    continue;
-                }
-                
-                GameObject targetObj = null;
-                string matchMethod = "none";
-                
-                // Try multiple methods to find the right object
-                
-                // Method 1: Try by PathID + ItemID combination (new, preferred method)
-                if (!string.IsNullOrEmpty(data.PathID) && !string.IsNullOrEmpty(data.ItemID))
-                {
-                    // Try to find object with matching PathID
-                    if (objectsByPathId.TryGetValue(data.PathID, out targetObj))
+                    if (entry.Key == null || entry.Value == null)
                     {
-                        matchMethod = "path_id";
+                        Logger.LogWarning("Skipping null database entry");
+                        appliedCount++; // Count as applied to maintain proper counts
+                        continue;
                     }
-                    // If not found by PathID, try ItemID
-                    else if (objectsByItemId.TryGetValue(data.ItemID, out targetObj))
+                    
+                    var data = entry.Value;
+                    
+                    // Skip destroyed objects
+                    if (data.IsDestroyed)
                     {
-                        matchMethod = "item_id";
+                        Logger.LogInfo($"Skipping destroyed object: {data.ObjectPath}");
+                        appliedCount++; // Count as applied
+                        continue;
                     }
-                }
-                
-                // Method 2: Try by direct path
-                if (targetObj == null && objectsByPath.TryGetValue(data.ObjectPath, out targetObj))
-                {
-                    matchMethod = "direct_path";
-                }
-                
-                // Method 3: Try by hierarchy position (sibling indices)
-                if (targetObj == null && !string.IsNullOrEmpty(data.UniqueId))
-                {
-                    // Extract sibling indices from unique ID
-                    string[] parts = data.UniqueId.Split('_');
-                    if (parts.Length > 2)
+                    
+                    // Skip spawned objects (they'll be handled separately)
+                    if (data.IsSpawned)
                     {
-                        string siblingIndices = parts[parts.Length - 1];
-                        if (objectsBySiblingPath.TryGetValue(siblingIndices, out targetObj))
+                        Logger.LogInfo($"Skipping spawned object: {data.ObjectPath} (will be handled separately)");
+                        appliedCount++; // Count as applied
+                        continue;
+                    }
+                    
+                    try
+                    {
+                        GameObject targetObj = null;
+                        string matchMethod = "none";
+                        
+                        // Try multiple methods to find the right object
+                        
+                        // Method 1: Try by PathID + ItemID combination (new, preferred method)
+                        if (!string.IsNullOrEmpty(data.PathID) && !string.IsNullOrEmpty(data.ItemID))
                         {
-                            matchMethod = "sibling_indices";
-                        }
-                    }
-                }
-                
-                // Method 4: Try by name
-                if (targetObj == null && !string.IsNullOrEmpty(data.ObjectName) && objectsByName.TryGetValue(data.ObjectName, out var nameMatches))
-                {
-                    // If multiple objects have this name, try to find the best match
-                    if (nameMatches.Count == 1)
-                    {
-                        targetObj = nameMatches[0];
-                        matchMethod = "unique_name";
-                    }
-                    else if (!string.IsNullOrEmpty(data.ParentPath))
-                    {
-                        // Try to match by parent path
-                        foreach (var obj in nameMatches)
-                        {
-                            if (obj.transform.parent != null && FixUtility.GetFullPath(obj.transform.parent) == data.ParentPath)
+                            // Try to find object with matching PathID
+                            if (objectsByPathId.TryGetValue(data.PathID, out targetObj))
                             {
-                                targetObj = obj;
-                                matchMethod = "parent_path";
-                                break;
+                                matchMethod = "path_id";
+                            }
+                            // If not found by PathID, try ItemID
+                            else if (objectsByItemId.TryGetValue(data.ItemID, out targetObj))
+                            {
+                                matchMethod = "item_id";
                             }
                         }
-                    }
-                }
-                
-                // Method 5: Try by GameObject.Find
-                if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath))
-                {
-                    targetObj = FindObjectByPath(data.ObjectPath);
-                    if (targetObj != null)
-                    {
-                        matchMethod = "gameobject_find";
-                    }
-                }
-                
-                // Apply transform if we found a match
-                if (targetObj != null)
-                {
-                    // Add or update tag component with PathID and ItemID
-                    TransformCacherTag tag = targetObj.GetComponent<TransformCacherTag>();
-                    if (tag == null)
-                    {
-                        tag = targetObj.AddComponent<TransformCacherTag>();
-                    }
-                    
-                    tag.PathID = data.PathID;
-                    tag.ItemID = data.ItemID;
-                    
-                    // Disable components that might interfere with transform changes
-                    bool disabledPhysics = false;
-                    bool disabledAnimation = false;
-                    
-                    // Try to disable Rigidbody if present
-                    Rigidbody rb = targetObj.GetComponent<Rigidbody>();
-                    if (rb != null)
-                    {
-                        rb.isKinematic = true;
-                        disabledPhysics = true;
-                    }
-                    
-                    // Try to disable animator if present
-                    Animator animator = targetObj.GetComponent<Animator>();
-                    if (animator != null && animator.enabled)
-                    {
-                        animator.enabled = false;
-                        disabledAnimation = true;
-                    }
-                    
-                    // Explicitly force the transform changes by setting both local and world properties
-                    Transform transform = targetObj.transform;
-                    
-                    // Store original values for debugging
-                    Vector3 origPos = transform.position;
-                    
-                    // Apply new values
-                    transform.position = data.Position;
-                    transform.rotation = Quaternion.Euler(data.Rotation);
-                    transform.localScale = data.Scale;
-                    
-                    // Force update by applying a small change and then reverting back
-                    transform.position += Vector3.one * 0.00001f;
-                    transform.position = data.Position;
-                    
-                    // Double-check the values were applied
-                    bool positionApplied = Vector3.Distance(transform.position, data.Position) < 0.01f;
-                    bool rotationApplied = Quaternion.Angle(transform.rotation, Quaternion.Euler(data.Rotation)) < 0.01f;
-                    bool scaleApplied = Vector3.Distance(transform.localScale, data.Scale) < 0.01f;
-                    
-                    if (positionApplied && rotationApplied && scaleApplied)
-                    {
-                        appliedCount++;
-                        Logger.LogInfo($"Applied transform to {targetObj.name} (method: {matchMethod}) - " +
-                                        $"Pos: {data.Position}, Rot: {data.Rotation}, Scale: {data.Scale}");
                         
-                        // Log before/after positions for debugging
-                        Logger.LogInfo($"Transform for {targetObj.name} - Before: {origPos}, After: {transform.position}");
+                        // Method 2: Try by direct path
+                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath) && objectsByPath.TryGetValue(data.ObjectPath, out targetObj))
+                        {
+                            matchMethod = "direct_path";
+                        }
+                        
+                        // Method 3: Try by hierarchy position (sibling indices)
+                        if (targetObj == null && !string.IsNullOrEmpty(data.UniqueId))
+                        {
+                            // Extract sibling indices from unique ID
+                            string[] parts = data.UniqueId.Split('_');
+                            if (parts.Length > 2)
+                            {
+                                string siblingIndices = parts[parts.Length - 1];
+                                if (!string.IsNullOrEmpty(siblingIndices) && objectsBySiblingPath.TryGetValue(siblingIndices, out targetObj))
+                                {
+                                    matchMethod = "sibling_indices";
+                                }
+                            }
+                        }
+                        
+                        // Method 4: Try by name
+                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectName) && objectsByName.TryGetValue(data.ObjectName, out var nameMatches))
+                        {
+                            // If multiple objects have this name, try to find the best match
+                            if (nameMatches != null)
+                            {
+                                if (nameMatches.Count == 1)
+                                {
+                                    targetObj = nameMatches[0];
+                                    matchMethod = "unique_name";
+                                }
+                                else if (!string.IsNullOrEmpty(data.ParentPath))
+                                {
+                                    // Try to match by parent path
+                                    foreach (var obj in nameMatches)
+                                    {
+                                        if (obj != null && obj.transform != null && obj.transform.parent != null && 
+                                            FixUtility.GetFullPath(obj.transform.parent) == data.ParentPath)
+                                        {
+                                            targetObj = obj;
+                                            matchMethod = "parent_path";
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Method 5: Try by GameObject.Find
+                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath))
+                        {
+                            targetObj = FindObjectByPath(data.ObjectPath);
+                            if (targetObj != null)
+                            {
+                                matchMethod = "gameobject_find";
+                            }
+                        }
+                        
+                        // Apply transform if we found a match
+                        if (targetObj != null)
+                        {
+                            // Add or update tag component with PathID and ItemID
+                            TransformCacherTag tag = targetObj.GetComponent<TransformCacherTag>();
+                            if (tag == null)
+                            {
+                                tag = targetObj.AddComponent<TransformCacherTag>();
+                            }
+                            
+                            tag.PathID = data.PathID;
+                            tag.ItemID = data.ItemID;
+                            
+                            // Disable components that might interfere with transform changes
+                            bool disabledPhysics = false;
+                            bool disabledAnimation = false;
+                            
+                            // Try to disable Rigidbody if present
+                            Rigidbody rb = targetObj.GetComponent<Rigidbody>();
+                            if (rb != null)
+                            {
+                                rb.isKinematic = true;
+                                disabledPhysics = true;
+                            }
+                            
+                            // Try to disable animator if present
+                            Animator animator = targetObj.GetComponent<Animator>();
+                            if (animator != null && animator.enabled)
+                            {
+                                animator.enabled = false;
+                                disabledAnimation = true;
+                            }
+                            
+                            // Explicitly force the transform changes by setting both local and world properties
+                            Transform transform = targetObj.transform;
+                            
+                            // Store original values for debugging
+                            Vector3 origPos = transform.position;
+                            
+                            // Apply new values
+                            transform.position = data.Position;
+                            transform.rotation = Quaternion.Euler(data.Rotation);
+                            transform.localScale = data.Scale;
+                            
+                            // Force update by applying a small change and then reverting back
+                            transform.position += Vector3.one * 0.00001f;
+                            transform.position = data.Position;
+                            
+                            // Double-check the values were applied
+                            bool positionApplied = Vector3.Distance(transform.position, data.Position) < 0.01f;
+                            bool rotationApplied = Quaternion.Angle(transform.rotation, Quaternion.Euler(data.Rotation)) < 0.01f;
+                            bool scaleApplied = Vector3.Distance(transform.localScale, data.Scale) < 0.01f;
+                            
+                            if (positionApplied && rotationApplied && scaleApplied)
+                            {
+                                appliedCount++;
+                                Logger.LogInfo($"Applied transform to {targetObj.name} (method: {matchMethod}) - " +
+                                                $"Pos: {data.Position}, Rot: {data.Rotation}, Scale: {data.Scale}");
+                                
+                                // Log before/after positions for debugging
+                                Logger.LogInfo($"Transform for {targetObj.name} - Before: {origPos}, After: {transform.position}");
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"Transform application failed for {targetObj.name} - " +
+                                                $"Pos ok: {positionApplied}, Rot ok: {rotationApplied}, Scale ok: {scaleApplied}");
+                            }
+                            
+                            // Re-enable components we disabled
+                            if (disabledPhysics && rb != null)
+                            {
+                                rb.isKinematic = false;
+                            }
+                            
+                            if (disabledAnimation && animator != null)
+                            {
+                                animator.enabled = true;
+                            }
+                        }
+                        else
+                        {
+                            Logger.LogWarning($"Could not find object with path: {data.ObjectPath}, name: {data.ObjectName}, PathID: {data.PathID}, ItemID: {data.ItemID}");
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        Logger.LogWarning($"Transform application failed for {targetObj.name} - " +
-                                          $"Pos ok: {positionApplied}, Rot ok: {rotationApplied}, Scale ok: {scaleApplied}");
+                        Logger.LogError($"Error applying transform for entry {entry.Key}: {ex.Message}");
                     }
                     
-                    // Re-enable components we disabled
-                    if (disabledPhysics && rb != null)
-                    {
-                        rb.isKinematic = false;
-                    }
-                    
-                    if (disabledAnimation && animator != null)
-                    {
-                        animator.enabled = true;
-                    }
+                    // Yield every few objects to avoid freezing - OUTSIDE the try-catch block
+                    if (appliedCount % 10 == 0)
+                        yield return null;
                 }
-                else
-                {
-                    Logger.LogWarning($"Could not find object with path: {data.ObjectPath}, name: {data.ObjectName}, PathID: {data.PathID}, ItemID: {data.ItemID}");
-                }
-                
-                // Yield every few objects to avoid freezing
-                if (appliedCount % 10 == 0)
-                    yield return null;
             }
             
             _isApplyingTransform = false;
