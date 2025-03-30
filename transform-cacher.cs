@@ -83,7 +83,7 @@ namespace TransformCacher
         // Prefab selection
         private List<GameObject> _availablePrefabs = new List<GameObject>();
         private bool _prefabsLoaded = false;
-        private GameObject _selectedPrefab = null;
+        // _selectedPrefab field removed to fix the warning - now using GUI's version
 
         // For categorized prefabs
         private Dictionary<string, List<GameObject>> _prefabCategories = new Dictionary<string, List<GameObject>>();
@@ -1174,7 +1174,7 @@ namespace TransformCacher
             return childrenIds;
         }
         
-        // Spawn a new object
+        // Spawn a new object - updated to use GUI's _selectedPrefab
         public void SpawnObject(GameObject prefab)
         {
             if (prefab == null)
