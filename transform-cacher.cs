@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using BepInEx;
 using UnityEngine;
+using UnityEngine.AssetBundleModule;
 using UnityEngine.SceneManagement;
 
 namespace TransformCacher
