@@ -20,7 +20,7 @@ namespace TransformCacher
         private TransformIdBaker _idBaker;
         
         // UI State for main window
-        private Rect _windowRect = new Rect(400, 100, 600, 500);
+        private Rect _windowRect;
         private Vector2 _mainWindowScrollPosition = Vector2.zero;
         
         // Spawn Item selector state
@@ -47,7 +47,7 @@ namespace TransformCacher
         
         // TransformIdBaker UI
         private bool _showBakerWindow = false;
-        private Rect _bakerWindowRect = new Rect(400, 200, 500, 500);
+        private Rect _bakerWindowRect;
         private Vector2 _bakerScrollPosition;
         private Vector2 _sceneScrollPosition;
         private string _ignorePrefix = "Weapon spawn";
@@ -61,11 +61,6 @@ namespace TransformCacher
         private Vector2 _minWindowSize = new Vector2(400, 300);
         private Vector2 _startResizeSize;
         private Vector2 _startResizeMousePos;
-
-        // Mouse focus management - similar to UnityExplorer
-        private bool _uiHasFocus = false;
-        private Vector3 _savedMousePosition;
-        private bool _mouseFocusInitialized = false;
         
         // Logging
         private static BepInEx.Logging.ManualLogSource Logger;
@@ -126,11 +121,8 @@ namespace TransformCacher
                 // Scan for bundle files
                 RefreshBundleFiles();
                 
-                // Force initial UI focus
-                SetUIFocus(true);
-                
-                // Force update window positions to ensure they're visible
-                EnsureWindowsVisible();
+                // Initialize window positions
+                InitializeWindowPositions();
                 
                 Logger.LogInfo("TransformCacherGUI initialized successfully");
             }
@@ -149,24 +141,42 @@ namespace TransformCacher
         
         private void Start()
         {
-            // Force UI focus on startup
-            if (!_mouseFocusInitialized)
-            {
-                SetUIFocus(true);
-                _mouseFocusInitialized = true;
-                
-                // Log for debugging
-                Logger.LogInfo("TransformCacherGUI started with UI focus enabled");
-            }
+            // Ensure cursor is always visible and interactive for UI
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
+            
+            // Log for debugging
+            Logger.LogInfo("TransformCacherGUI started");
         }
         
         private void Update()
         {
-            // Check for mouse toggle hotkey
-            if (TransformCacherPlugin.MouseToggleHotkey != null && TransformCacherPlugin.MouseToggleHotkey.Value.IsDown())
+            // No need to check for mouse toggle hotkey anymore
+        }
+        
+        private void InitializeWindowPositions()
+        {
+            // Size for main window
+            float windowWidth = 600;
+            float windowHeight = 500;
+            
+            // Position the window based on config
+            if (TransformCacherPlugin.UISide != null && TransformCacherPlugin.UISide.Value == UISideOption.Right)
             {
-                ToggleMouseFocus();
+                // Right side
+                _windowRect = new Rect(Screen.width - windowWidth - 20, 100, windowWidth, windowHeight);
             }
+            else
+            {
+                // Left side (default)
+                _windowRect = new Rect(20, 100, windowWidth, windowHeight);
+            }
+            
+            // Baker window position (offset from main window)
+            _bakerWindowRect = new Rect(_windowRect.x + 50, _windowRect.y + 50, 500, 500);
+            
+            // Make sure windows are within screen bounds
+            EnsureWindowsVisible();
         }
         
         public void OnGUI()
@@ -176,19 +186,8 @@ namespace TransformCacher
                 
             try
             {
-                // Simplified event handling - don't filter events, just let Unity handle them
-                
                 // Status box to show mod is active
                 GUI.Box(new Rect(10, 10, 200, 30), "Transform Cacher Active");
-                
-                // Draw mouse focus indicator
-                string focusText = _uiHasFocus ? "UI Focus: ACTIVE" : "UI Focus: GAME";
-                Color focusColor = _uiHasFocus ? Color.green : Color.yellow;
-                GUIStyle focusStyle = new GUIStyle(GUI.skin.box);
-                Color defaultColor = GUI.color;
-                GUI.color = focusColor;
-                GUI.Box(new Rect(10, 45, 200, 30), focusText, focusStyle);
-                GUI.color = defaultColor;
                 
                 // Main window
                 _windowRect = GUI.Window(0, _windowRect, DrawMainWindow, "Transform Cacher");
@@ -231,53 +230,6 @@ namespace TransformCacher
                 _bakerWindowRect.width,
                 _bakerWindowRect.height
             );
-        }
-
-        // Improved mouse focus handling similar to UnityExplorer
-        private void SetUIFocus(bool focus)
-        {
-            _uiHasFocus = focus;
-            
-            if (_uiHasFocus)
-            {
-                // Save current mouse position for later restoration
-                _savedMousePosition = Input.mousePosition;
-                
-                // Enable cursor for UI interaction
-                Cursor.visible = true;
-                Cursor.lockState = CursorLockMode.None;
-                
-                Logger.LogInfo("Mouse focus switched to UI");
-            }
-            else
-            {
-                // Hide cursor and return to game control
-                Cursor.visible = false;
-                Cursor.lockState = CursorLockMode.Locked;
-                
-                // Don't try to restore position as that can be problematic
-                
-                Logger.LogInfo("Mouse focus returned to game");
-            }
-            
-            // Notify TransformCacher of focus change
-            if (_transformCacher != null)
-            {
-                // TransformCacher will handle focus-related logic
-            }
-        }
-        
-        // Toggle mouse focus between UI and game
-        private void ToggleMouseFocus()
-        {
-            try 
-            {
-                SetUIFocus(!_uiHasFocus);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Error in ToggleMouseFocus: {ex.Message}");
-            }
         }
         
         private void OnDisable()
@@ -454,12 +406,6 @@ namespace TransformCacher
         {
             try
             {
-                // Ensure UI has focus when interacting with main window
-                if (!_uiHasFocus)
-                {
-                    SetUIFocus(true);
-                }
-                
                 // Begin scrollable area with try/finally to ensure proper closing
                 _mainWindowScrollPosition = GUILayout.BeginScrollView(_mainWindowScrollPosition);
                 try
@@ -626,18 +572,10 @@ namespace TransformCacher
                     else
                         GUILayout.Label("Spawn Hotkey: N/A");
                         
-                    if (TransformCacherPlugin.MouseToggleHotkey != null)
-                        GUILayout.Label($"Mouse Toggle Hotkey: {TransformCacherPlugin.MouseToggleHotkey.Value.ToString()}");
-                    else
-                        GUILayout.Label("Mouse Toggle Hotkey: N/A");
-                        
                     if (_transformCacher != null)
                         GUILayout.Label($"Current Scene: {_transformCacher.GetCurrentScene() ?? "Unknown"}");
                     else
                         GUILayout.Label("Current Scene: Unknown");
-                        
-                    // Current mouse focus state
-                    GUILayout.Label($"Mouse Focus: {(_uiHasFocus ? "UI" : "Game")}");
 
                     GUILayout.Space(10);
                     
@@ -902,11 +840,9 @@ namespace TransformCacher
         
         private void DrawSpawnItemSelector(int id)
         {
-            // Ensure UI has focus when interacting with this window
-            if (!_uiHasFocus)
-            {
-                SetUIFocus(true);
-            }
+            // Ensure cursor is visible for UI interaction
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
             
             GUI.enabled = true; // Ensure GUI elements are enabled
             
@@ -1162,11 +1098,9 @@ namespace TransformCacher
         
         private void DrawBakerWindow(int id)
         {
-            // Ensure UI has focus when interacting with this window
-            if (!_uiHasFocus)
-            {
-                SetUIFocus(true);
-            }
+            // Ensure cursor is visible for UI interaction
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
             
             GUI.enabled = true; // Ensure GUI elements are enabled
             
