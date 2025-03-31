@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using BepInEx;
 using UnityEngine;
-using UnityEngine.AssetBundleModule;
 
 namespace TransformCacher
 {
