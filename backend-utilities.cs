@@ -142,6 +142,13 @@ namespace TransformCacher
 }
 namespace TransformCacher
 {
+    // Define the UISide options enum
+    public enum UISideOption
+    {
+        Left,
+        Right
+    }
+
     [BepInPlugin("com.transformcacher.plugin", "TransformCacher", "1.1.0")]
     public class TransformCacherPlugin : BaseUnityPlugin
     {
@@ -153,9 +160,11 @@ namespace TransformCacher
         public static ConfigEntry<KeyboardShortcut> TagHotkey;
         public static ConfigEntry<KeyboardShortcut> DestroyHotkey;
         public static ConfigEntry<KeyboardShortcut> SpawnHotkey;
-        public static ConfigEntry<KeyboardShortcut> MouseToggleHotkey;
         public static ConfigEntry<float> TransformDelay;
         public static ConfigEntry<int> MaxRetries;
+        
+        // UI positioning configuration
+        public static ConfigEntry<UISideOption> UISide;
         
         // Logging
         public static ManualLogSource Log;
@@ -242,6 +251,10 @@ namespace TransformCacher
             
             EnableObjectHighlight = Config.Bind("General", "EnableObjectHighlight", true, 
                 "Enable highlighting of selected objects");
+            
+            // UI positioning configuration
+            UISide = Config.Bind("General", "UISide", UISideOption.Left, 
+                "Which side of the screen to pin the UI to (Left or Right)");
 
             // Hotkeys
             SaveHotkey = Config.Bind("Hotkeys", "SaveHotkey", new KeyboardShortcut(KeyCode.F9), 
@@ -256,9 +269,6 @@ namespace TransformCacher
             SpawnHotkey = Config.Bind("Hotkeys", "SpawnHotkey", new KeyboardShortcut(KeyCode.F8), 
                 "Hotkey to open the prefab selector");
             
-            MouseToggleHotkey = Config.Bind("Hotkeys", "MouseToggleHotkey", new KeyboardShortcut(KeyCode.Tab, KeyCode.LeftAlt), 
-                "Hotkey to toggle between mouse UI control and game control");
-
             // Advanced settings
             TransformDelay = Config.Bind("Advanced", "TransformDelay", 2.0f, 
                 "Delay in seconds before applying transforms after scene load");

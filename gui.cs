@@ -158,7 +158,7 @@ namespace TransformCacher
         {
             // Size for main window
             float windowWidth = 600;
-            float windowHeight = 500;
+            float windowHeight = 800;
             
             // Position the window based on config
             if (TransformCacherPlugin.UISide != null && TransformCacherPlugin.UISide.Value == UISideOption.Right)
