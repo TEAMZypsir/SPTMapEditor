@@ -51,6 +51,9 @@
     <Reference Include="UnityEngine.UI">
       <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.UI.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.AssetBundleModule.dll</HintPath>
+    </Reference>
     
     <!-- Unity Explorer dependencies -->
     <Reference Include="UniverseLib.Mono">
