@@ -139,60 +139,6 @@ namespace TransformCacher
     }
 
     #endregion
-
-    #region Asset Studio Integration
-
-    /// <summary>
-    /// Static class for helping with AssetStudio integration
-    /// </summary>
-    public static class AssetStudioHelper
-    {
-        /// <summary>
-        /// Initialize AssetStudio logging with BepInEx logger
-        /// </summary>
-        public static void InitializeAssetStudioLogging(ManualLogSource logSource)
-        {
-            try
-            {
-                // Find AssetStudio Logger class via reflection
-                var assetStudioAssembly = AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => a.GetName().Name.Contains("AssetStudio"));
-                    
-                if (assetStudioAssembly != null)
-                {
-                    var loggerType = assetStudioAssembly.GetType("AssetStudio.Logger");
-                    if (loggerType != null)
-                    {
-                        var defaultField = loggerType.GetField("Default", BindingFlags.Public | BindingFlags.Static);
-                        if (defaultField != null)
-                        {
-                            // Create our logger and assign it to AssetStudio's Logger.Default
-                            var bepinexLogger = new BepinexLogger(logSource);
-                            defaultField.SetValue(null, bepinexLogger);
-                        }
-                    }
-                    
-                    var progressType = assetStudioAssembly.GetType("AssetStudio.Progress");
-                    if (progressType != null)
-                    {
-                        var defaultField = progressType.GetField("Default", BindingFlags.Public | BindingFlags.Static);
-                        if (defaultField != null)
-                        {
-                            // Create progress logger
-                            var progressLogger = new ProgressLogger();
-                            defaultField.SetValue(null, progressLogger);
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                logSource.LogError($"Failed to initialize AssetStudio logging: {ex.Message}");
-            }
-        }
-    }
-
-    #endregion
 }
 namespace TransformCacher
 {
@@ -210,10 +156,6 @@ namespace TransformCacher
         public static ConfigEntry<KeyboardShortcut> MouseToggleHotkey;
         public static ConfigEntry<float> TransformDelay;
         public static ConfigEntry<int> MaxRetries;
-        
-        // New configuration entries for export
-        public static ConfigEntry<string> DefaultExportPath;
-        public static ConfigEntry<bool> AlwaysExportTextures;
         
         // Logging
         public static ManualLogSource Log;
@@ -261,21 +203,6 @@ namespace TransformCacher
                     idBaker.Initialize();
                     Log.LogInfo("TransformIdBaker initialized");
                 }
-                
-                // Add enhanced exporter
-                var exporter = managerObject.AddComponent<EnhancedExporter>();
-                if (exporter != null)
-                {
-                    exporter.Initialize();
-                    
-                    // Set export path from config
-                    if (!string.IsNullOrEmpty(DefaultExportPath.Value))
-                    {
-                        exporter.ExportPath = DefaultExportPath.Value;
-                    }
-                    
-                    Log.LogInfo("EnhancedExporter initialized");
-                }
 
                 // Add GUI last since it depends on other components
                 var gui = managerObject.AddComponent<TransformCacherGUI>();
@@ -286,7 +213,6 @@ namespace TransformCacher
                 }
                 
                 _initialized = true;
-                StartCoroutine(InitializeBundles());
                 
                 Log.LogInfo("TransformCacher initialized successfully");
             }
@@ -295,118 +221,13 @@ namespace TransformCacher
                 Log.LogError($"Error during initialization: {ex.Message}\n{ex.StackTrace}");
             }
         }
+        
         public void OnDisable()
         {
             if (_initialized)
             {
                 // Perform cleanup only if initialized
                 Log.LogInfo("TransformCacher plugin disabled");
-            }
-        }
-        
-        private IEnumerator InitializeBundles()
-        {
-            // Wait a bit for the game to fully initialize
-            yield return new WaitForSeconds(2f);
-            
-            try
-            {
-                // Try to find or load UnityGLTF assemblies
-                var unityGltfAssembly = DependencyLoader.LoadAssembly("UnityGLTFScripts");
-                if (unityGltfAssembly == null)
-                {
-                    Log.LogWarning("UnityGLTFScripts assembly not found in libs directory");
-                }
-                else
-                {
-                    Log.LogInfo("Successfully loaded UnityGLTFScripts assembly");
-                }
-                
-                // Load any required helper assemblies
-                DependencyLoader.LoadAssembly("GLTFSerialization");
-                DependencyLoader.LoadAssembly("UnityGLTF.Helpers");
-                
-                // Try to load AssetStudio if needed (optional)
-                var assetStudioAssembly = DependencyLoader.LoadAssembly("AssetStudio");
-                if (assetStudioAssembly != null)
-                {
-                    Log.LogInfo("Successfully loaded AssetStudio assembly");
-                    
-                    // Initialize AssetStudio logging
-                    try
-                    {
-                        var loggerType = assetStudioAssembly.GetType("AssetStudio.Logger");
-                        if (loggerType != null)
-                        {
-                            var defaultField = loggerType.GetField("Default", 
-                                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-                                
-                            if (defaultField != null)
-                            {
-                                // Find or create BepinexLogger
-                                var bepinexLoggerType = typeof(TransformCacher).Assembly.GetType("TransformCacher.BepinexLogger");
-                                if (bepinexLoggerType != null)
-                                {
-                                    var constructor = bepinexLoggerType.GetConstructor(new[] { typeof(ManualLogSource) });
-                                    if (constructor != null)
-                                    {
-                                        var logger = constructor.Invoke(new object[] { Log });
-                                        defaultField.SetValue(null, logger);
-                                        Log.LogInfo("Configured AssetStudio logger");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.LogWarning($"Error configuring AssetStudio logging: {ex.Message}");
-                    }
-                }
-                
-                // Look for shader bundles in the libs directory
-                string libsPath = Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), "libs");
-                string bundlePath = Path.Combine(libsPath, "unitygltf");
-                
-                if (File.Exists(bundlePath))
-                {
-                    Log.LogInfo($"Found shader bundle: {bundlePath}");
-                    
-                    try
-                    {
-                        var bundle = AssetBundle.LoadFromFile(bundlePath);
-                        if (bundle != null)
-                        {
-                            var shaders = bundle.LoadAllAssets<Shader>();
-                            if (shaders != null && shaders.Length > 0)
-                            {
-                                // Add shaders to BundleShaders
-                                var bundleShadersType = typeof(TransformCacher).Assembly.GetType("TransformCacher.BundleShaders");
-                                if (bundleShadersType != null)
-                                {
-                                    var addMethod = bundleShadersType.GetMethod("Add", new[] { typeof(Shader[]) });
-                                    if (addMethod != null)
-                                    {
-                                        addMethod.Invoke(null, new object[] { shaders });
-                                        Log.LogInfo($"Added {shaders.Length} shaders from bundle");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.LogError($"Error loading shader bundle: {ex.Message}");
-                    }
-                }
-                else
-                {
-                    Log.LogWarning($"Shader bundle not found: {bundlePath}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.LogError($"Error during bundle initialization: {ex.Message}\n{ex.StackTrace}");
             }
         }
 
@@ -444,14 +265,6 @@ namespace TransformCacher
             
             MaxRetries = Config.Bind("Advanced", "MaxRetries", 3, 
                 "Maximum number of retry attempts for applying transforms");
-            
-            // Export settings
-            DefaultExportPath = Config.Bind("Export", "DefaultExportPath", 
-                Path.Combine(Paths.PluginPath, "TransformCacher", "Exports"),
-                "Default path for exporting models");
-                
-            AlwaysExportTextures = Config.Bind("Export", "AlwaysExportTextures", true,
-                "Always export textures with models");
 
             Log.LogInfo("Configuration initialized");
         }

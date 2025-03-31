@@ -1210,6 +1210,7 @@ namespace TransformCacher
                 spawnedObj.SetActive(true);
                 
                 // Tag the object and mark as spawned
+// Tag the object and mark as spawned
                 TransformCacherTag tag = spawnedObj.AddComponent<TransformCacherTag>();
                 tag.IsSpawned = true;
                 tag.PathID = FixUtility.GeneratePathID(spawnedObj.transform);

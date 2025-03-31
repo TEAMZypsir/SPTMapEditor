@@ -51,64 +51,10 @@
     <Reference Include="UnityEngine.UI">
       <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.UI.dll</HintPath>
     </Reference>
-    <Reference Include="UnityEngine.AssetBundleModule">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.AssetBundleModule.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityEngine.ImageConversionModule">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.ImageConversionModule.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.TextMeshPro" Condition="Exists('F:\TarkovHDRework\Client Mods\MapEditor\references\Unity.TextMeshPro.dll')">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Unity.TextMeshPro.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
-    <Reference Include="TMPro" Condition="Exists('F:\TarkovHDRework\Client Mods\MapEditor\references\TMPro.dll')">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\TMPro.dll</HintPath>
-      <Private>False</Private>
-    </Reference>
     
     <!-- Unity Explorer dependencies -->
     <Reference Include="UniverseLib.Mono">
       <HintPath>F:\SPT UNITY MODDING 3.11\BepInEx\plugins\sinai-dev-UnityExplorer\UniverseLib.Mono.dll</HintPath>
-    </Reference>
-
-    <!-- Export Libraries -->
-    <Reference Include="AssetStudio">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\AssetStudio.dll</HintPath>
-    </Reference>
-    <Reference Include="GLTFSerialization">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\GLTFSerialization.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityGLTF.Helpers">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\UnityGLTF.Helpers.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityGLTF.Plugins.Experimental">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\UnityGLTF.Plugins.Experimental.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityGltf.RenderPipelines">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\UnityGltf.RenderPipelines.dll</HintPath>
-    </Reference>
-    <Reference Include="UnityGLTFScripts">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\UnityGLTFScripts.dll</HintPath>
-    </Reference>
-    <Reference Include="Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\Unity.RenderPipelines.ShaderGraph.ShaderGraphLibrary.dll</HintPath>
-    </Reference>
-    
-    <!-- Support Libraries -->
-    <Reference Include="K4os.Compression.LZ4">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\K4os.Compression.LZ4.dll</HintPath>
-    </Reference>
-    <Reference Include="System.Buffers">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\System.Buffers.dll</HintPath>
-    </Reference>
-    <Reference Include="System.Memory">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\System.Memory.dll</HintPath>
-    </Reference>
-    <Reference Include="System.Numerics.Vectors">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\System.Numerics.Vectors.dll</HintPath>
-    </Reference>
-    <Reference Include="ZstdSharp">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\depends\ZstdSharp.dll</HintPath>
     </Reference>
   </ItemGroup>
   
@@ -118,15 +64,5 @@
     
     <!-- Copy the DLL with error handling -->
     <Exec Command="copy /Y &quot;$(TargetDir)$(TargetName).dll&quot; &quot;F:\TarkovHDRework\BepInEx\plugins\TransformCacher\$(TargetName).dll&quot;" ContinueOnError="true" />
-    
-    <!-- Ensure bundles directory exists -->
-    <MakeDir Directories="F:\TarkovHDRework\BepInEx\plugins\TransformCacher\bundles" />
-    
-    <!-- Copy bundles with error handling -->
-    <Exec Command="if exist &quot;F:\TarkovHDRework\Client Mods\MapEditor\references\depends\bundles\unitygltf&quot; copy /Y &quot;F:\TarkovHDRework\Client Mods\MapEditor\references\depends\bundles\unitygltf&quot; &quot;F:\TarkovHDRework\BepInEx\plugins\TransformCacher\bundles\unitygltf&quot;" ContinueOnError="true" />
-    <Exec Command="if exist &quot;F:\TarkovHDRework\Client Mods\MapEditor\references\depends\bundles\unitygltf.manifest&quot; copy /Y &quot;F:\TarkovHDRework\Client Mods\MapEditor\references\depends\bundles\unitygltf.manifest&quot; &quot;F:\TarkovHDRework\BepInEx\plugins\TransformCacher\bundles\unitygltf.manifest&quot;" ContinueOnError="true" />
-    
-    <!-- Create exports directory -->
-    <MakeDir Directories="F:\TarkovHDRework\BepInEx\plugins\TransformCacher\Exports" />
   </Target>
 </Project>
