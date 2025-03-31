@@ -23,14 +23,24 @@ namespace TransformCacher
         private Rect _windowRect = new Rect(400, 100, 600, 500);
         private Vector2 _mainWindowScrollPosition = Vector2.zero;
         
-        // Prefab selector state
-        private bool _showPrefabSelector = false;
+        // Spawn Item selector state
+        private bool _showSpawnItemSelector = false;
         private Vector2 _prefabScrollPosition = Vector2.zero;
         private Vector2 _categoryScrollPosition = Vector2.zero;
         private bool _showCategoryDropdown = false;
         private string _prefabSearchText = "";
         public GameObject _selectedPrefab = null; // Made public for access from TransformCacher
         private string _selectedCategory = "All";
+        
+        // Bundle loading state
+        private bool _showBundleSelector = false;
+        private bool _showBuiltInSelector = true;
+        private List<string> _bundleFiles = new List<string>();
+        private List<string> _bundleDirectories = new List<string>();
+        private string _selectedBundle = null;
+        private Dictionary<string, AssetBundle> _loadedBundles = new Dictionary<string, AssetBundle>();
+        private List<GameObject> _bundleObjects = new List<GameObject>();
+        private Vector2 _bundleScrollPosition = Vector2.zero;
         
         // For database scene selection
         private int _selectedSceneIndex = 0;
@@ -108,6 +118,9 @@ namespace TransformCacher
                 // Get logger
                 Logger = BepInEx.Logging.Logger.CreateLogSource("TransformCacherGUI");
                 
+                // Scan for bundle files
+                RefreshBundleFiles();
+                
                 Logger.LogInfo("TransformCacherGUI initialized successfully");
             }
             catch (Exception ex)
@@ -147,11 +160,11 @@ namespace TransformCacher
                     // Main window
                     _windowRect = GUI.Window(0, _windowRect, DrawMainWindow, "Transform Cacher");
                     
-                    // Prefab selector window - only draw at top level
-                    if (_showPrefabSelector)
+                    // Spawn item selector window - only draw at top level
+                    if (_showSpawnItemSelector)
                     {
                         Rect selectorRect = new Rect(_windowRect.x + _windowRect.width + 10, _windowRect.y, 500, 500);
-                        GUI.Window(1, selectorRect, DrawPrefabSelector, "Prefab Selector");
+                        GUI.Window(1, selectorRect, DrawSpawnItemSelector, "Spawn Item");
                     }
                     
                     // Baker window - only draw at top level
@@ -173,6 +186,17 @@ namespace TransformCacher
             {
                 // Ensure all resources are properly released
                 Resources.UnloadUnusedAssets();
+                
+                // Unload any loaded asset bundles
+                foreach (var bundle in _loadedBundles.Values)
+                {
+                    if (bundle != null)
+                    {
+                        bundle.Unload(false);
+                    }
+                }
+                _loadedBundles.Clear();
+                _bundleObjects.Clear();
                 
                 // Log that we're shutting down cleanly
                 if (Logger != null)
@@ -202,6 +226,127 @@ namespace TransformCacher
             catch (Exception ex)
             {
                 Debug.LogError($"Error during TransformCacherGUI destruction: {ex.Message}");
+            }
+        }
+        
+        private void RefreshBundleFiles()
+        {
+            try 
+            {
+                _bundleFiles.Clear();
+                _bundleDirectories.Clear();
+                
+                // Get path to bundle directory
+                string baseDir = Path.Combine(Paths.PluginPath, "TransformCacher", "bundles");
+                
+                // Create directory if it doesn't exist
+                if (!Directory.Exists(baseDir))
+                {
+                    Directory.CreateDirectory(baseDir);
+                    Logger.LogInfo($"Created bundles directory: {baseDir}");
+                    return;
+                }
+                
+                // Get all bundle files (without extension filtering since bundles can have any extension)
+                string[] files = Directory.GetFiles(baseDir, "*", SearchOption.AllDirectories);
+                foreach (string file in files)
+                {
+                    // Skip meta files and other non-bundle files (best effort)
+                    if (file.EndsWith(".meta") || file.EndsWith(".manifest") || file.EndsWith(".txt"))
+                        continue;
+                        
+                    _bundleFiles.Add(file);
+                }
+                
+                // Get subdirectories
+                string[] directories = Directory.GetDirectories(baseDir);
+                foreach (string dir in directories)
+                {
+                    _bundleDirectories.Add(dir);
+                }
+                
+                Logger.LogInfo($"Found {_bundleFiles.Count} bundle files and {_bundleDirectories.Count} directories");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error refreshing bundle files: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+        
+        private GameObject LoadObjectFromBundle(string bundlePath, string assetName = null)
+        {
+            try
+            {
+                // Check if bundle is already loaded
+                if (!_loadedBundles.TryGetValue(bundlePath, out AssetBundle bundle))
+                {
+                    // Load the asset bundle
+                    bundle = AssetBundle.LoadFromFile(bundlePath);
+                    if (bundle == null)
+                    {
+                        Logger.LogError($"Failed to load bundle: {bundlePath}");
+                        return null;
+                    }
+                    
+                    _loadedBundles[bundlePath] = bundle;
+                }
+                
+                // Get the first asset if no specific name provided
+                if (string.IsNullOrEmpty(assetName))
+                {
+                    // Load all assets from the bundle
+                    _bundleObjects.Clear();
+                    string[] assetNames = bundle.GetAllAssetNames();
+                    
+                    if (assetNames.Length == 0)
+                    {
+                        Logger.LogWarning($"No assets found in bundle: {bundlePath}");
+                        return null;
+                    }
+                    
+                    // Try to load all game objects from bundle
+                    foreach (string name in assetNames)
+                    {
+                        try
+                        {
+                            GameObject obj = bundle.LoadAsset<GameObject>(name);
+                            if (obj != null)
+                            {
+                                _bundleObjects.Add(obj);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogWarning($"Error loading asset {name}: {ex.Message}");
+                        }
+                    }
+                    
+                    if (_bundleObjects.Count > 0)
+                    {
+                        return _bundleObjects[0]; // Return the first object
+                    }
+                    else
+                    {
+                        Logger.LogWarning($"No GameObject assets found in bundle: {bundlePath}");
+                        return null;
+                    }
+                }
+                else
+                {
+                    // Load the specific named asset
+                    GameObject obj = bundle.LoadAsset<GameObject>(assetName);
+                    if (obj == null)
+                    {
+                        Logger.LogError($"Failed to load asset {assetName} from bundle: {bundlePath}");
+                        return null;
+                    }
+                    return obj;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error loading bundle {bundlePath}: {ex.Message}\n{ex.StackTrace}");
+                return null;
             }
         }
         
@@ -242,10 +387,11 @@ namespace TransformCacher
                                 Logger.LogInfo("No object currently inspected");
                         }
                         
-                        if (GUILayout.Button("Open Prefab Selector", GUILayout.Height(30)))
+                        // Fixed: Changed button text to "Spawn Item" and fixed handler
+                        if (GUILayout.Button("Spawn Item", GUILayout.Height(30)))
                         {
-                            _showPrefabSelector = !_showPrefabSelector;
-                            if (_showPrefabSelector && _transformCacher != null && !_transformCacher.ArePrefabsLoaded())
+                            _showSpawnItemSelector = !_showSpawnItemSelector;
+                            if (_showSpawnItemSelector && _transformCacher != null && !_transformCacher.ArePrefabsLoaded())
                             {
                                 _transformCacher.StartCoroutine(_transformCacher.LoadPrefabs());
                             }
@@ -258,7 +404,7 @@ namespace TransformCacher
                             _transformCacher.StartCoroutine(_transformCacher.ApplyTransformsWithRetry(currentScene));
                         }
                         
-                        // Always display ID Baker button, but disable if _idBaker is null
+                        // Fixed: Properly enable ID Baker button
                         GUI.enabled = _idBaker != null;
                         if (GUILayout.Button("Open ID Baker", GUILayout.Height(30)))
                         {
@@ -572,7 +718,7 @@ namespace TransformCacher
             }
         }
         
-        private void DrawPrefabSelector(int id)
+        private void DrawSpawnItemSelector(int id)
         {
             GUILayout.BeginVertical();
             
@@ -582,7 +728,7 @@ namespace TransformCacher
                 GUILayout.Label("Error: TransformCacher reference is missing");
                 if (GUILayout.Button("Close"))
                 {
-                    _showPrefabSelector = false;
+                    _showSpawnItemSelector = false;
                 }
                 GUILayout.EndVertical();
                 GUI.DragWindow();
@@ -599,119 +745,210 @@ namespace TransformCacher
             }
             GUILayout.EndHorizontal();
             
-            // Loading indicator
-            if (!_transformCacher.ArePrefabsLoaded())
+            // Source selector buttons
+            GUILayout.BeginHorizontal();
+            
+            GUI.enabled = true;
+            if (GUILayout.Button(_showBuiltInSelector ? "Built-in ✓" : "Built-in", GUILayout.Width(150), GUILayout.Height(30)))
             {
-                GUILayout.Box("Loading prefabs, please wait...");
+                _showBuiltInSelector = true;
+                _showBundleSelector = false;
             }
-            else
+            
+            if (GUILayout.Button(_showBundleSelector ? "Bundles ✓" : "Bundles", GUILayout.Width(150), GUILayout.Height(30)))
             {
-                // Category selector
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Category:", GUILayout.Width(60));
-                
-                if (GUILayout.Button(_selectedCategory, GUILayout.Width(150)))
+                _showBundleSelector = true;
+                _showBuiltInSelector = false;
+                RefreshBundleFiles();
+            }
+            
+            GUILayout.EndHorizontal();
+            
+            GUILayout.Space(10);
+            
+            // Loading indicator for built-in prefabs
+            if (_showBuiltInSelector)
+            {
+                if (!_transformCacher.ArePrefabsLoaded())
                 {
-                    // Toggle dropdown
-                    _showCategoryDropdown = !_showCategoryDropdown;
+                    GUILayout.Box("Loading game objects, please wait...");
                 }
-                
-                GUILayout.EndHorizontal();
-                
-                // Category dropdown
-                if (_showCategoryDropdown)
+                else
                 {
-                    Rect dropdownRect = GUILayoutUtility.GetLastRect();
-                    dropdownRect.y += dropdownRect.height;
-                    dropdownRect.width = 210;
+                    // Category selector (for built-in items only)
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("Category:", GUILayout.Width(60));
                     
-                    var categoryNames = _transformCacher.GetCategoryNames();
-                    if (categoryNames != null && categoryNames.Count > 0)
+                    if (GUILayout.Button(_selectedCategory, GUILayout.Width(150)))
                     {
-                        dropdownRect.height = Mathf.Min(categoryNames.Count * 25, 200);
-                        
-                        GUILayout.BeginArea(dropdownRect, GUI.skin.box);
-                        _categoryScrollPosition = GUILayout.BeginScrollView(_categoryScrollPosition, GUILayout.Height(dropdownRect.height - 10));
-                        
-                        foreach (var category in categoryNames)
-                        {
-                            int count = _transformCacher.GetPrefabCountForCategory(category);
-                            if (GUILayout.Button($"{category} ({count})"))
-                            {
-                                _selectedCategory = category;
-                                _transformCacher.SetSelectedCategory(_selectedCategory);
-                                _showCategoryDropdown = false;
-                            }
-                        }
-                        
-                        GUILayout.EndScrollView();
-                        GUILayout.EndArea();
+                        // Toggle dropdown
+                        _showCategoryDropdown = !_showCategoryDropdown;
                     }
-                }
-                
-                try
-                {
-                    // Get filtered prefabs
-                    List<GameObject> filteredPrefabs = _transformCacher.GetFilteredPrefabs(_prefabSearchText);
                     
-                    if (filteredPrefabs != null)
+                    GUILayout.EndHorizontal();
+                    
+                    // Category dropdown
+                    if (_showCategoryDropdown)
                     {
-                        GUILayout.Label($"Found {filteredPrefabs.Count} prefabs in '{_selectedCategory}'{(!string.IsNullOrEmpty(_prefabSearchText) ? $" matching '{_prefabSearchText}'" : "")}");
+                        Rect dropdownRect = GUILayoutUtility.GetLastRect();
+                        dropdownRect.y += dropdownRect.height;
+                        dropdownRect.width = 210;
                         
-                        // Scrollable list
-                        _prefabScrollPosition = GUILayout.BeginScrollView(_prefabScrollPosition, GUILayout.Height(350));
-                        
-                        foreach (var prefab in filteredPrefabs)
+                        var categoryNames = _transformCacher.GetCategoryNames();
+                        if (categoryNames != null && categoryNames.Count > 0)
                         {
-                            if (prefab == null) continue;
+                            dropdownRect.height = Mathf.Min(categoryNames.Count * 25, 200);
                             
-                            bool isSelected = _selectedPrefab == prefab;
-                            GUI.color = isSelected ? Color.green : Color.white;
+                            GUILayout.BeginArea(dropdownRect, GUI.skin.box);
+                            _categoryScrollPosition = GUILayout.BeginScrollView(_categoryScrollPosition, GUILayout.Height(dropdownRect.height - 10));
                             
-                            if (GUILayout.Button(prefab.name, GUILayout.Height(30)))
+                            foreach (var category in categoryNames)
                             {
-                                _selectedPrefab = prefab;
+                                int count = _transformCacher.GetPrefabCountForCategory(category);
+                                if (GUILayout.Button($"{category} ({count})"))
+                                {
+                                    _selectedCategory = category;
+                                    _transformCacher.SetSelectedCategory(_selectedCategory);
+                                    _showCategoryDropdown = false;
+                                }
                             }
                             
-                            GUI.color = Color.white;
+                            GUILayout.EndScrollView();
+                            GUILayout.EndArea();
                         }
-                        
-                        GUILayout.EndScrollView();
                     }
-                    else
-                    {
-                        GUILayout.Label("No prefabs found");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    GUILayout.Label($"Error getting prefabs: {ex.Message}");
-                    Logger.LogError($"Error in prefab selector: {ex.Message}");
-                }
-                
-                // Spawn button
-                GUI.enabled = _selectedPrefab != null;
-                if (GUILayout.Button("Spawn Selected Object", GUILayout.Height(40)))
-                {
+                    
                     try
                     {
-                        _transformCacher.SpawnObject(_selectedPrefab);
-                        // Clear selection and hide the selector
-                        _selectedPrefab = null;
-                        _showPrefabSelector = false;
+                        // Get filtered prefabs
+                        List<GameObject> filteredPrefabs = _transformCacher.GetFilteredPrefabs(_prefabSearchText);
+                        
+                        if (filteredPrefabs != null)
+                        {
+                            GUILayout.Label($"Found {filteredPrefabs.Count} items in '{_selectedCategory}'{(!string.IsNullOrEmpty(_prefabSearchText) ? $" matching '{_prefabSearchText}'" : "")}");
+                            
+                            // Scrollable list
+                            _prefabScrollPosition = GUILayout.BeginScrollView(_prefabScrollPosition, GUILayout.Height(280));
+                            
+                            foreach (var prefab in filteredPrefabs)
+                            {
+                                if (prefab == null) continue;
+                                
+                                bool isSelected = _selectedPrefab == prefab;
+                                GUI.color = isSelected ? Color.green : Color.white;
+                                
+                                if (GUILayout.Button(prefab.name, GUILayout.Height(30)))
+                                {
+                                    _selectedPrefab = prefab;
+                                }
+                                
+                                GUI.color = Color.white;
+                            }
+                            
+                            GUILayout.EndScrollView();
+                        }
+                        else
+                        {
+                            GUILayout.Label("No items found");
+                        }
                     }
                     catch (Exception ex)
                     {
-                        Logger.LogError($"Error spawning object: {ex.Message}");
+                        GUILayout.Label($"Error getting prefabs: {ex.Message}");
+                        Logger.LogError($"Error in prefab selector: {ex.Message}");
                     }
                 }
-                GUI.enabled = true;
             }
+            // Bundle selector
+            else if (_showBundleSelector)
+            {
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("Refresh Bundles", GUILayout.Width(150)))
+                {
+                    RefreshBundleFiles();
+                }
+                GUILayout.Label($"Found {_bundleFiles.Count} bundle files");
+                GUILayout.EndHorizontal();
+                
+                // Show bundle files
+                _bundleScrollPosition = GUILayout.BeginScrollView(_bundleScrollPosition, GUILayout.Height(280));
+                
+                // Filter bundle files by search text if provided
+                List<string> filteredBundles = _bundleFiles;
+                if (!string.IsNullOrEmpty(_prefabSearchText))
+                {
+                    filteredBundles = _bundleFiles.Where(file => 
+                        Path.GetFileName(file).IndexOf(_prefabSearchText, StringComparison.OrdinalIgnoreCase) >= 0)
+                        .ToList();
+                }
+                
+                foreach (string bundlePath in filteredBundles)
+                {
+                    string displayName = Path.GetFileName(bundlePath);
+                    bool isSelected = _selectedBundle == bundlePath;
+                    GUI.color = isSelected ? Color.green : Color.white;
+                    
+                    if (GUILayout.Button(displayName, GUILayout.Height(30)))
+                    {
+                        // Handle bundle selection
+                        _selectedBundle = bundlePath;
+                        
+                        // Try to load the bundle and its objects
+                        GameObject bundleObj = LoadObjectFromBundle(bundlePath);
+                        if (bundleObj != null)
+                        {
+                            _selectedPrefab = bundleObj;
+                        }
+                    }
+                    
+                    GUI.color = Color.white;
+                }
+                
+                // If we loaded bundle objects, show them too
+                if (_bundleObjects.Count > 0 && _selectedBundle != null)
+                {
+                    GUILayout.Space(10);
+                    GUILayout.Label($"Assets in bundle:");
+                    
+                    foreach (GameObject obj in _bundleObjects)
+                    {
+                        bool isSelected = _selectedPrefab == obj;
+                        GUI.color = isSelected ? Color.green : Color.white;
+                        
+                        if (GUILayout.Button(obj.name, GUILayout.Height(30)))
+                        {
+                            _selectedPrefab = obj;
+                        }
+                        
+                        GUI.color = Color.white;
+                    }
+                }
+                
+                GUILayout.EndScrollView();
+            }
+            
+            // Spawn button
+            GUI.enabled = _selectedPrefab != null;
+            if (GUILayout.Button("Spawn Selected Object", GUILayout.Height(40)))
+            {
+                try
+                {
+                    _transformCacher.SpawnObject(_selectedPrefab);
+                    // Clear selection and hide the selector
+                    _selectedPrefab = null;
+                    _showSpawnItemSelector = false;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError($"Error spawning object: {ex.Message}");
+                }
+            }
+            GUI.enabled = true;
             
             // Close button
             if (GUILayout.Button("Close", GUILayout.Height(30)))
             {
-                _showPrefabSelector = false;
+                _showSpawnItemSelector = false;
             }
             
             GUILayout.EndVertical();
@@ -824,9 +1061,9 @@ namespace TransformCacher
             
             GUILayout.Space(10);
             
-            // Baking controls
+            // Baking controls - fix for Bake ID button
             GUI.enabled = !_idBaker.IsBaking();
-            if (GUILayout.Button("Bake Scene(s)", GUILayout.Height(40)))
+            if (GUILayout.Button("Bake Scene IDs", GUILayout.Height(40)))
             {
                 _idBaker.StartBaking();
             }
