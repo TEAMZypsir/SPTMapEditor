@@ -160,17 +160,21 @@ namespace TransformCacher
                     // Main window
                     _windowRect = GUI.Window(0, _windowRect, DrawMainWindow, "Transform Cacher");
                     
-                    // Spawn item selector window - only draw at top level
+                    // Spawn item selector window - only draw at top level and when it should be shown
                     if (_showSpawnItemSelector)
                     {
+                        // Use fixed positioning relative to main window
                         Rect selectorRect = new Rect(_windowRect.x + _windowRect.width + 10, _windowRect.y, 500, 500);
-                        GUI.Window(1, selectorRect, DrawSpawnItemSelector, "Spawn Item");
+                        int spawnWindowId = 1; // Use a unique window ID
+                        GUI.Window(spawnWindowId, selectorRect, DrawSpawnItemSelector, "Spawn Item");
                     }
                     
-                    // Baker window - only draw at top level
+                    // Baker window - only draw at top level and when it should be shown
                     if (_showBakerWindow && _idBaker != null)
                     {
-                        _bakerWindowRect = GUI.Window(100, _bakerWindowRect, DrawBakerWindow, "Transform ID Baker");
+                        // Use fixed positioning
+                        int bakerWindowId = 100; // Use a unique window ID
+                        _bakerWindowRect = GUI.Window(bakerWindowId, _bakerWindowRect, DrawBakerWindow, "Transform ID Baker");
                     }
                 }
             }
@@ -387,13 +391,28 @@ namespace TransformCacher
                                 Logger.LogInfo("No object currently inspected");
                         }
                         
-                        // Fixed: Changed button text to "Spawn Item" and fixed handler
+                        // Dedicated spawn item button with improved handling
                         if (GUILayout.Button("Spawn Item", GUILayout.Height(30)))
                         {
+                            // Toggle spawn selector visibility
                             _showSpawnItemSelector = !_showSpawnItemSelector;
-                            if (_showSpawnItemSelector && _transformCacher != null && !_transformCacher.ArePrefabsLoaded())
+                            
+                            // If we're showing it and prefabs aren't loaded, force load them
+                            if (_showSpawnItemSelector)
                             {
-                                _transformCacher.StartCoroutine(_transformCacher.LoadPrefabs());
+                                // Log for debugging
+                                Logger.LogInfo($"Opening spawn selector window - prefabs loaded: {(_transformCacher?.ArePrefabsLoaded() ?? false)}");
+                                
+                                // Force start loading prefabs if needed
+                                if (_transformCacher != null && !_transformCacher.ArePrefabsLoaded())
+                                {
+                                    Logger.LogInfo("Starting prefab loading...");
+                                    _transformCacher.StartCoroutine(_transformCacher.LoadPrefabs());
+                                }
+                            }
+                            else
+                            {
+                                Logger.LogInfo("Closing spawn selector window");
                             }
                         }
                         
@@ -405,10 +424,29 @@ namespace TransformCacher
                         }
                         
                         // Fixed: Properly enable ID Baker button
-                        GUI.enabled = _idBaker != null;
+                        GUI.enabled = true; // Always enable the button, we'll handle the null case inside
                         if (GUILayout.Button("Open ID Baker", GUILayout.Height(30)))
                         {
+                            // Explicitly toggle baker window
                             _showBakerWindow = !_showBakerWindow;
+                            Logger.LogInfo($"ID Baker window toggled: {_showBakerWindow}");
+                            
+                            // If we're opening it and the baker is null, try to get or create it
+                            if (_showBakerWindow)
+                            {
+                                if (_idBaker == null)
+                                {
+                                    _idBaker = FindObjectOfType<TransformIdBaker>();
+                                    
+                                    if (_idBaker == null)
+                                    {
+                                        Logger.LogWarning("TransformIdBaker not found, creating a new one");
+                                        GameObject idBakerObj = new GameObject("TransformIdBaker");
+                                        _idBaker = idBakerObj.AddComponent<TransformIdBaker>();
+                                        _idBaker.Initialize();
+                                    }
+                                }
+                            }
                         }
                         GUI.enabled = true; // Reset enabled state
 
@@ -1170,112 +1208,6 @@ namespace TransformCacher
                     return style;
                 }
             }
-        }
-    }
-    
-    /// <summary>
-    /// Helper class with utilities for fixing and generating IDs
-    /// </summary>
-    public static class FixUtility
-    {
-        // Get the hierarchy path using sibling indices
-        public static string GetSiblingIndicesPath(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            // Use List instead of Stack to avoid reference issues
-            List<int> indices = new List<int>();
-            
-            Transform current = transform;
-            while (current != null)
-            {
-                indices.Insert(0, current.GetSiblingIndex());
-                current = current.parent;
-            }
-            
-            return string.Join(".", indices.ToArray());
-        }
-        
-        // Get the full path of a transform in the hierarchy
-        public static string GetFullPath(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            // Use List instead of Stack to avoid reference issues
-            List<string> path = new List<string>();
-            
-            var current = transform;
-            while (current != null)
-            {
-                path.Insert(0, current.name);
-                current = current.parent;
-            }
-            
-            return string.Join("/", path.ToArray());
-        }
-        
-        // Generate a PathID for a transform
-        public static string GeneratePathID(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            // Get object path
-            string objectPath = GetFullPath(transform);
-            
-            // Create a hash code from the path for shorter ID
-            int hashCode = objectPath.GetHashCode();
-            
-            // Return a path ID that's "P" prefix + absolute hash code
-            return "P" + Math.Abs(hashCode).ToString();
-        }
-        
-        // Generate an ItemID for a transform
-        public static string GenerateItemID(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            // Use name + scene + sibling index as a unique identifier
-            string name = transform.name;
-            string scene = transform.gameObject.scene.name;
-            int siblingIndex = transform.GetSiblingIndex();
-            
-            string idSource = $"{name}_{scene}_{siblingIndex}";
-            int hashCode = idSource.GetHashCode();
-            
-            // Return an item ID that's "I" prefix + absolute hash code
-            return "I" + Math.Abs(hashCode).ToString();
-        }
-        
-        // Generate a unique ID for a transform that persists across game sessions
-        public static string GenerateUniqueId(Transform transform)
-        {
-            if (transform == null) return string.Empty;
-            
-            // Get PathID and ItemID for this transform
-            string pathId = GeneratePathID(transform);
-            string itemId = GenerateItemID(transform);
-            
-            // Combine for the new format
-            if (!string.IsNullOrEmpty(pathId) && !string.IsNullOrEmpty(itemId))
-            {
-                return pathId + "+" + itemId;
-            }
-            
-            // Fall back to old format if generation failed
-            string sceneName = transform.gameObject.scene.name;
-            string hierarchyPath = GetFullPath(transform);
-            
-            // Add position to make IDs more unique
-            // Round to 2 decimal places to avoid floating point precision issues
-            string positionStr = string.Format(
-                "pos_x{0:F2}y{1:F2}z{2:F2}",
-                Math.Round(transform.position.x, 2),
-                Math.Round(transform.position.y, 2),
-                Math.Round(transform.position.z, 2)
-            );
-            
-            // Simple, stable ID based on scene, path and position
-            return $"{sceneName}_{hierarchyPath}_{positionStr}";
         }
     }
 }
