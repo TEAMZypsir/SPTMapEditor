@@ -54,6 +54,9 @@
     <Reference Include="UnityEngine.AssetBundleModule">
       <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.AssetBundleModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.ParticleSystemModule.dll</HintPath>
+    </Reference>
     
     <!-- Unity Explorer dependencies -->
     <Reference Include="UniverseLib.Mono">

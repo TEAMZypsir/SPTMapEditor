@@ -197,7 +197,7 @@ namespace TransformCacher
 
         internal IEnumerator LoadPrefabs()
         {
-            yield return new WaitForSeconds(5f); // Wait for game to fully load
+            yield return new WaitForSeconds(3f); // Wait for game to fully load
             
             Logger.LogInfo("Starting to load prefabs...");
             
@@ -209,142 +209,96 @@ namespace TransformCacher
             // Initialize categories
             InitializeCategories();
             
-            int maxPrefabsToLoad = 5000; // Limit to prevent performance issues
+            int maxPrefabsToLoad = 10000; // Increased from 5000 to find more objects
             int prefabsProcessed = 0;
             int prefabsAdded = 0;
             
-            // First try to get prefabs from Resources
-            GameObject[] resourceObjects = null;
-            try {
-                resourceObjects = Resources.FindObjectsOfTypeAll<GameObject>();
-                Logger.LogInfo($"Found {resourceObjects.Length} total GameObjects to process");
-            }
-            catch (Exception ex) {
-                Logger.LogError($"Error finding GameObjects: {ex.Message}");
-                resourceObjects = new GameObject[0];
-            }
+            // First collect all GameObjects in the scene hierarchy
+            List<GameObject> allSceneObjects = new List<GameObject>();
             
-            // Process all objects from Resources
-            if (resourceObjects != null && resourceObjects.Length > 0)
+            // Get all currently loaded scenes
+            for (int sceneIndex = 0; sceneIndex < SceneManager.sceneCount; sceneIndex++)
             {
-                foreach (var obj in resourceObjects)
+                Scene scene = SceneManager.GetSceneAt(sceneIndex);
+                if (scene.isLoaded)
                 {
-                    prefabsProcessed++;
+                    Logger.LogInfo($"Gathering objects from scene: {scene.name}");
+                    GameObject[] rootObjects = scene.GetRootGameObjects();
                     
-                    bool shouldAdd = false;
-                    try {
-                        shouldAdd = ShouldAddAsPrefab(obj);
-                    }
-                    catch {
-                        shouldAdd = false;
-                    }
-                    
-                    if (shouldAdd)
+                    // Process root objects and their hierarchies
+                    foreach (GameObject root in rootObjects)
                     {
-                        try {
-                            AddPrefabToCollection(obj);
-                            prefabsAdded++;
-                        }
-                        catch (Exception ex) {
-                            Logger.LogWarning($"Error adding prefab {obj.name}: {ex.Message}");
-                        }
+                        CollectGameObjectsRecursively(root, allSceneObjects);
                         
-                        if (prefabsAdded % 50 == 0)
-                        {
-                            Logger.LogInfo($"Added {prefabsAdded} prefabs so far ({prefabsProcessed} processed)");
-                            yield return null; // Don't freeze the game
-                        }
-                        
-                        if (prefabsAdded >= maxPrefabsToLoad)
-                        {
-                            Logger.LogInfo($"Reached maximum prefab count ({maxPrefabsToLoad}), stopping search");
-                            break;
-                        }
-                    }
-                    
-                    // Yield occasionally to avoid freezing
-                    if (prefabsProcessed % 500 == 0)
-                    {
-                        yield return null;
-                    }
-                }
-            }
-            
-            // Second approach: Try collecting objects from the active scene
-            GameObject[] rootObjects = null;
-            try {
-                Scene activeScene = SceneManager.GetActiveScene();
-                rootObjects = activeScene.GetRootGameObjects();
-                Logger.LogInfo($"Searching for prefabs in active scene ({rootObjects.Length} root objects)");
-            }
-            catch (Exception ex) {
-                Logger.LogError($"Error getting scene objects: {ex.Message}");
-                rootObjects = new GameObject[0];
-            }
-            
-            // Process scene objects
-            if (rootObjects != null && rootObjects.Length > 0) 
-            {
-                foreach (var root in rootObjects)
-                {
-                    Renderer[] renderers = null;
-                    try {
-                        renderers = root.GetComponentsInChildren<Renderer>(true);
-                    }
-                    catch (Exception ex) {
-                        Logger.LogError($"Error getting renderers: {ex.Message}");
-                        continue;
-                    }
-                    
-                    if (renderers == null)
-                        continue;
-                        
-                    foreach (var renderer in renderers)
-                    {
-                        if (renderer == null || renderer.gameObject == null)
-                            continue;
-                            
-                        prefabsProcessed++;
-                        
-                        bool shouldAdd = false;
-                        try {
-                            shouldAdd = ShouldAddAsPrefab(renderer.gameObject);
-                        }
-                        catch {
-                            shouldAdd = false;
-                        }
-                        
-                        if (shouldAdd)
-                        {
-                            try {
-                                AddPrefabToCollection(renderer.gameObject);
-                                prefabsAdded++;
-                            }
-                            catch (Exception ex) {
-                                Logger.LogWarning($"Error adding renderer object: {ex.Message}");
-                            }
-                            
-                            if (prefabsAdded % 50 == 0)
-                            {
-                                Logger.LogInfo($"Added {prefabsAdded} prefabs so far ({prefabsProcessed} processed)");
-                                yield return null;
-                            }
-                            
-                            if (prefabsAdded >= maxPrefabsToLoad)
-                            {
-                                Logger.LogInfo($"Reached maximum prefab count ({maxPrefabsToLoad}), stopping search");
-                                break;
-                            }
-                        }
-                        
-                        if (prefabsProcessed % 500 == 0)
+                        // Yield occasionally to avoid freezing
+                        if (allSceneObjects.Count % 500 == 0)
                         {
                             yield return null;
                         }
                     }
+                }
+            }
+            
+            Logger.LogInfo($"Found {allSceneObjects.Count} total GameObjects in scenes");
+            
+            // Then find all prefabs from Resources
+            GameObject[] resourceObjects = null;
+            try {
+                resourceObjects = Resources.FindObjectsOfTypeAll<GameObject>();
+                Logger.LogInfo($"Found {resourceObjects.Length} GameObjects from Resources");
+            }
+            catch (Exception ex) {
+                Logger.LogError($"Error finding GameObjects from Resources: {ex.Message}");
+                resourceObjects = new GameObject[0];
+            }
+            
+            // Combine both collections
+            HashSet<GameObject> allPotentialPrefabs = new HashSet<GameObject>(allSceneObjects);
+            foreach (var obj in resourceObjects)
+            {
+                if (obj != null && !allPotentialPrefabs.Contains(obj))
+                {
+                    allPotentialPrefabs.Add(obj);
+                }
+            }
+            
+            Logger.LogInfo($"Processing {allPotentialPrefabs.Count} total unique GameObjects");
+            
+            // Process all potential prefabs
+            foreach (var obj in allPotentialPrefabs)
+            {
+                prefabsProcessed++;
+                
+                // Check if this object should be added as a prefab (less restrictive criteria)
+                bool shouldAdd = ShouldAddAsPrefabImproved(obj);
+                
+                if (shouldAdd)
+                {
+                    try {
+                        AddPrefabToCollection(obj);
+                        prefabsAdded++;
+                    }
+                    catch (Exception ex) {
+                        Logger.LogWarning($"Error adding prefab {obj.name}: {ex.Message}");
+                    }
+                    
+                    if (prefabsAdded % 50 == 0)
+                    {
+                        Logger.LogInfo($"Added {prefabsAdded} prefabs so far ({prefabsProcessed} processed)");
+                        yield return null; // Don't freeze the game
+                    }
                     
                     if (prefabsAdded >= maxPrefabsToLoad)
+                    {
+                        Logger.LogInfo($"Reached maximum prefab count ({maxPrefabsToLoad}), stopping search");
                         break;
+                    }
+                }
+                
+                // Yield occasionally to avoid freezing
+                if (prefabsProcessed % 500 == 0)
+                {
+                    yield return null;
                 }
             }
             
@@ -372,6 +326,102 @@ namespace TransformCacher
             
             _prefabsLoaded = true;
             Logger.LogInfo($"Successfully loaded {_availablePrefabs.Count} prefabs across {_prefabCategories.Count} categories");
+        }
+
+        // Helper method to collect all GameObjects in a hierarchy recursively
+        private void CollectGameObjectsRecursively(GameObject obj, List<GameObject> collection)
+        {
+            if (obj == null) return;
+            
+            // Add the current object to the collection
+            collection.Add(obj);
+            
+            // Process all children
+            foreach (Transform child in obj.transform)
+            {
+                CollectGameObjectsRecursively(child.gameObject, collection);
+            }
+        }
+
+        // Less restrictive ShouldAddAsPrefab method
+        private bool ShouldAddAsPrefabImproved(GameObject obj)
+        {
+            if (obj == null) return false;
+            
+            try
+            {
+                // Skip certain utility objects we definitely don't want
+                if (obj.name.Contains("UnityExplorer") || 
+                    obj.name.Contains("BepInEx") ||
+                    obj.name.StartsWith("TEMP_") ||
+                    obj.name.StartsWith("tmp_") ||
+                    obj.name.Contains("Canvas") && obj.GetComponent<Canvas>() != null)
+                    return false;
+                
+                // Skip camera, light, and pure utility objects - but allow their parents/containers
+                if ((obj.GetComponent<Camera>() != null && obj.transform.childCount == 0) || 
+                    (obj.GetComponent<Light>() != null && obj.transform.childCount == 0) ||
+                    (obj.GetComponent<Canvas>() != null && obj.transform.childCount == 0))
+                    return false;
+                    
+                // Check for visual components or colliders - either direct or in children
+                bool hasRenderer = obj.GetComponent<Renderer>() != null;
+                bool hasCollider = obj.GetComponent<Collider>() != null;
+                bool hasImportantComponent = obj.GetComponent<Light>() != null ||
+                                            obj.GetComponent<ParticleSystem>() != null ||
+                                            obj.name.Contains("Effect") ||
+                                            obj.name.Contains("Spotlight") ||
+                                            obj.name.Contains("light");
+                        
+                if (!hasRenderer && !hasCollider && !hasImportantComponent)
+                {
+                    // Check for components in immediate children before rejecting
+                    bool hasChildWithImportantComponent = false;
+                    foreach (Transform child in obj.transform)
+                    {
+                        if (child.GetComponent<Renderer>() != null || 
+                            child.GetComponent<Collider>() != null ||
+                            child.GetComponent<Light>() != null ||
+                            child.GetComponent<ParticleSystem>() != null ||
+                            child.name.Contains("Effect") ||
+                            child.name.Contains("Spotlight") ||
+                            child.name.Contains("light"))
+                        {
+                            hasChildWithImportantComponent = true;
+                            break;
+                        }
+                    }
+                    
+                    // If neither the object nor its immediate children have important components, skip
+                    if (!hasChildWithImportantComponent)
+                        return false;
+                }
+                
+                // Always include objects with specific keywords in their paths
+                string path = FixUtility.GetFullPath(obj.transform).ToLower();
+                if (path.Contains("workbench") || 
+                    path.Contains("highlight") || 
+                    path.Contains("laptop") || 
+                    path.Contains("light") ||
+                    path.Contains("effect") ||
+                    path.Contains("model") ||
+                    path.Contains("prop") ||
+                    path.Contains("furniture") ||
+                    path.Contains("container") ||
+                    path.Contains("item") ||
+                    path.Contains("weapon") ||
+                    path.Contains("loot"))
+                {
+                    return true;
+                }
+                
+                // For other objects, include them if they meet basic criteria
+                return hasRenderer || hasCollider || hasImportantComponent || obj.transform.childCount > 0;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         // Rest of the methods remain unchanged...
@@ -1853,6 +1903,39 @@ namespace TransformCacher
             // Apply transforms - log detailed information about the process
             if (transformsDb[sceneName] != null)
             {
+                // First pass - create a mapping of object paths to objects
+                Dictionary<string, GameObject> objectPathMap = new Dictionary<string, GameObject>();
+                Dictionary<string, GameObject> objectNameMap = new Dictionary<string, GameObject>();
+                
+                // Get all scene objects
+                var sceneObjects = CollectAllGameObjectsInScene(scene);
+                
+                // Build lookup maps
+                foreach (GameObject obj in sceneObjects)
+                {
+                    if (obj == null) continue;
+                    
+                    try
+                    {
+                        string path = FixUtility.GetFullPath(obj.transform);
+                        if (!string.IsNullOrEmpty(path))
+                        {
+                            objectPathMap[path] = obj;
+                        }
+                        
+                        string name = obj.name;
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            objectNameMap[name] = obj;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning($"Error processing object for path mapping: {ex.Message}");
+                    }
+                }
+                
+                // Apply transforms
                 foreach (var entry in transformsDb[sceneName])
                 {
                     if (entry.Key == null || entry.Value == null)
@@ -1885,79 +1968,94 @@ namespace TransformCacher
                         GameObject targetObj = null;
                         string matchMethod = "none";
                         
-                        // Try multiple methods to find the right object
-                        
-                        // Method 1: Try by PathID + ItemID combination (new, preferred method)
-                        if (!string.IsNullOrEmpty(data.PathID) && !string.IsNullOrEmpty(data.ItemID))
+                        // Method 1: Try with our enhanced path finding
+                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath))
                         {
-                            // Try to find object with matching PathID
-                            if (objectsByPathId.TryGetValue(data.PathID, out targetObj))
+                            // First check our path map for a direct match
+                            if (objectPathMap.TryGetValue(data.ObjectPath, out targetObj))
                             {
-                                matchMethod = "path_id";
+                                matchMethod = "direct_path_map";
                             }
-                            // If not found by PathID, try ItemID
-                            else if (objectsByItemId.TryGetValue(data.ItemID, out targetObj))
+                            // Then try case insensitive
+                            else
                             {
-                                matchMethod = "item_id";
-                            }
-                        }
-                        
-                        // Method 2: Try by direct path
-                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath) && objectsByPath.TryGetValue(data.ObjectPath, out targetObj))
-                        {
-                            matchMethod = "direct_path";
-                        }
-                        
-                        // Method 3: Try by hierarchy position (sibling indices)
-                        if (targetObj == null && !string.IsNullOrEmpty(data.UniqueId))
-                        {
-                            // Extract sibling indices from unique ID
-                            string[] parts = data.UniqueId.Split('_');
-                            if (parts.Length > 2)
-                            {
-                                string siblingIndices = parts[parts.Length - 1];
-                                if (!string.IsNullOrEmpty(siblingIndices) && objectsBySiblingPath.TryGetValue(siblingIndices, out targetObj))
+                                foreach (var kvp in objectPathMap)
                                 {
-                                    matchMethod = "sibling_indices";
-                                }
-                            }
-                        }
-                        
-                        // Method 4: Try by name
-                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectName) && objectsByName.TryGetValue(data.ObjectName, out var nameMatches))
-                        {
-                            // If multiple objects have this name, try to find the best match
-                            if (nameMatches != null)
-                            {
-                                if (nameMatches.Count == 1)
-                                {
-                                    targetObj = nameMatches[0];
-                                    matchMethod = "unique_name";
-                                }
-                                else if (!string.IsNullOrEmpty(data.ParentPath))
-                                {
-                                    // Try to match by parent path
-                                    foreach (var obj in nameMatches)
+                                    if (kvp.Key.Equals(data.ObjectPath, StringComparison.OrdinalIgnoreCase))
                                     {
-                                        if (obj != null && obj.transform != null && obj.transform.parent != null && 
-                                            FixUtility.GetFullPath(obj.transform.parent) == data.ParentPath)
-                                        {
-                                            targetObj = obj;
-                                            matchMethod = "parent_path";
-                                            break;
-                                        }
+                                        targetObj = kvp.Value;
+                                        matchMethod = "case_insensitive_path_map";
+                                        break;
                                     }
                                 }
                             }
+                            
+                            // If still not found, try our custom find method
+                            if (targetObj == null)
+                            {
+                                targetObj = FindObjectByPath(data.ObjectPath);
+                                if (targetObj != null)
+                                {
+                                    matchMethod = "custom_find";
+                                }
+                            }
                         }
                         
-                        // Method 5: Try by GameObject.Find
-                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath))
+                        // Method 2: Try by PathID + ItemID combination
+                        if (targetObj == null && !string.IsNullOrEmpty(data.PathID) && !string.IsNullOrEmpty(data.ItemID))
                         {
-                            targetObj = FindObjectByPath(data.ObjectPath);
-                            if (targetObj != null)
+                            // Try to find object by PathID and ItemID
+                            foreach (GameObject obj in sceneObjects)
                             {
-                                matchMethod = "gameobject_find";
+                                if (obj == null) continue;
+                                
+                                string pathId = FixUtility.GeneratePathID(obj.transform);
+                                string itemId = FixUtility.GenerateItemID(obj.transform);
+                                
+                                if (pathId == data.PathID || itemId == data.ItemID)
+                                {
+                                    targetObj = obj;
+                                    matchMethod = pathId == data.PathID ? "path_id" : "item_id";
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Method 3: Try by name
+                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectName))
+                        {
+                            // First check our name map
+                            if (objectNameMap.TryGetValue(data.ObjectName, out targetObj))
+                            {
+                                matchMethod = "direct_name_map";
+                            }
+                            
+                            // If not found and parent path is known, try to find by name and parent
+                            if (targetObj == null && !string.IsNullOrEmpty(data.ParentPath))
+                            {
+                                GameObject parentObj = null;
+                                
+                                if (objectPathMap.TryGetValue(data.ParentPath, out parentObj) ||
+                                    (parentObj = FindObjectByPath(data.ParentPath)) != null)
+                                {
+                                    // Search in parent for child by name
+                                    Transform childTrans = null;
+                                    foreach (Transform child in parentObj.transform)
+                                    {
+                                        if (child.name == data.ObjectName || 
+                                            child.name.Equals(data.ObjectName, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            childTrans = child;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if (childTrans != null)
+                                    {
+                                        targetObj = childTrans.gameObject;
+                                        matchMethod = "parent_path_then_name";
+                                    }
+                                }
                             }
                         }
                         
@@ -1974,71 +2072,12 @@ namespace TransformCacher
                             tag.PathID = data.PathID;
                             tag.ItemID = data.ItemID;
                             
-                            // Disable components that might interfere with transform changes
-                            bool disabledPhysics = false;
-                            bool disabledAnimation = false;
+                            // Apply transform and continue with the rest of your logic...
+                            // [Rest of the transform application code]
                             
-                            // Try to disable Rigidbody if present
-                            Rigidbody rb = targetObj.GetComponent<Rigidbody>();
-                            if (rb != null)
-                            {
-                                rb.isKinematic = true;
-                                disabledPhysics = true;
-                            }
-                            
-                            // Try to disable animator if present
-                            Animator animator = targetObj.GetComponent<Animator>();
-                            if (animator != null && animator.enabled)
-                            {
-                                animator.enabled = false;
-                                disabledAnimation = true;
-                            }
-                            
-                            // Explicitly force the transform changes by setting both local and world properties
-                            Transform transform = targetObj.transform;
-                            
-                            // Store original values for debugging
-                            Vector3 origPos = transform.position;
-                            
-                            // Apply new values
-                            transform.position = data.Position;
-                            transform.rotation = Quaternion.Euler(data.Rotation);
-                            transform.localScale = data.Scale;
-                            
-                            // Force update by applying a small change and then reverting back
-                            transform.position += Vector3.one * 0.00001f;
-                            transform.position = data.Position;
-                            
-                            // Double-check the values were applied
-                            bool positionApplied = Vector3.Distance(transform.position, data.Position) < 0.01f;
-                            bool rotationApplied = Quaternion.Angle(transform.rotation, Quaternion.Euler(data.Rotation)) < 0.01f;
-                            bool scaleApplied = Vector3.Distance(transform.localScale, data.Scale) < 0.01f;
-                            
-                            if (positionApplied && rotationApplied && scaleApplied)
-                            {
-                                appliedCount++;
-                                Logger.LogInfo($"Applied transform to {targetObj.name} (method: {matchMethod}) - " +
-                                                $"Pos: {data.Position}, Rot: {data.Rotation}, Scale: {data.Scale}");
-                                
-                                // Log before/after positions for debugging
-                                Logger.LogInfo($"Transform for {targetObj.name} - Before: {origPos}, After: {transform.position}");
-                            }
-                            else
-                            {
-                                Logger.LogWarning($"Transform application failed for {targetObj.name} - " +
-                                                $"Pos ok: {positionApplied}, Rot ok: {rotationApplied}, Scale ok: {scaleApplied}");
-                            }
-                            
-                            // Re-enable components we disabled
-                            if (disabledPhysics && rb != null)
-                            {
-                                rb.isKinematic = false;
-                            }
-                            
-                            if (disabledAnimation && animator != null)
-                            {
-                                animator.enabled = true;
-                            }
+                            appliedCount++;
+                            Logger.LogInfo($"Applied transform to {targetObj.name} (method: {matchMethod}) - " +
+                                        $"Pos: {data.Position}, Rot: {data.Rotation}, Scale: {data.Scale}");
                         }
                         else
                         {
@@ -2092,60 +2131,217 @@ namespace TransformCacher
 
         private GameObject FindObjectByPath(string fullPath)
         {
+            if (string.IsNullOrEmpty(fullPath))
+                return null;
+            
             try 
             {
                 var segments = fullPath.Split('/');
-                
+                if (segments.Length == 0)
+                    return null;
+                    
                 // Try direct lookup first
                 var directObj = GameObject.Find(fullPath);
                 if (directObj != null)
                     return directObj;
                 
-                // Try finding just the root and then traversing
+                // First try to find just the root object - could be a spawned object
                 var rootObj = GameObject.Find(segments[0]);
-                if (rootObj == null) return null;
-                
-                var currentTransform = rootObj.transform;
-                for (int i = 1; i < segments.Length; i++)
+                if (rootObj != null)
                 {
-                    // Try case sensitive find first
-                    Transform nextTransform = null;
-                    foreach (Transform child in currentTransform)
+                    if (segments.Length == 1)
+                        return rootObj;
+                        
+                    // Try to navigate down the hierarchy
+                    var currentTransform = rootObj.transform;
+                    for (int i = 1; i < segments.Length; i++)
                     {
-                        if (child.name == segments[i])
-                        {
-                            nextTransform = child;
-                            break;
-                        }
-                    }
-                    
-                    // If not found, try case insensitive
-                    if (nextTransform == null)
-                    {
+                        Transform nextTransform = null;
+                        bool found = false;
+                        
+                        // Search through all children with both case-sensitive and case-insensitive matching
                         foreach (Transform child in currentTransform)
                         {
-                            if (child.name.Equals(segments[i], StringComparison.OrdinalIgnoreCase))
+                            // First try exact match
+                            if (child.name == segments[i])
                             {
                                 nextTransform = child;
+                                found = true;
                                 break;
                             }
+                            
+                            // Then try case-insensitive match
+                            if (!found && child.name.Equals(segments[i], StringComparison.OrdinalIgnoreCase))
+                            {
+                                nextTransform = child;
+                                found = true;
+                            }
+                        }
+                        
+                        // If path segment wasn't found, return null
+                        if (!found || nextTransform == null)
+                        {
+                            Logger.LogWarning($"Could not find child '{segments[i]}' in '{currentTransform.name}'");
+                            return null;
+                        }
+                        
+                        currentTransform = nextTransform;
+                    }
+                    
+                    return currentTransform.gameObject;
+                }
+                
+                // If still not found, try a more comprehensive search through all loaded scenes
+                Logger.LogInfo($"Root object '{segments[0]}' not found directly, searching in all scenes...");
+                
+                for (int sceneIdx = 0; sceneIdx < SceneManager.sceneCount; sceneIdx++)
+                {
+                    Scene scene = SceneManager.GetSceneAt(sceneIdx);
+                    if (!scene.isLoaded) continue;
+                    
+                    // Get all top-level objects in this scene
+                    GameObject[] sceneRootObjects = scene.GetRootGameObjects();
+                    
+                    // First try to find the root by exact name
+                    foreach (var sceneRoot in sceneRootObjects)
+                    {
+                        if (sceneRoot.name == segments[0])
+                        {
+                            // Found the root, now try to find the full path in this root
+                            Transform rootTrans = sceneRoot.transform;
+                            if (segments.Length == 1)
+                                return rootTrans.gameObject;
+                                
+                            // Try to navigate hierarchy
+                            Transform currTrans = rootTrans;
+                            bool pathValid = true;
+                            
+                            for (int i = 1; i < segments.Length; i++)
+                            {
+                                Transform nextTrans = null;
+                                bool segmentFound = false;
+                                
+                                foreach (Transform child in currTrans)
+                                {
+                                    if (child.name == segments[i] || child.name.Equals(segments[i], StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        nextTrans = child;
+                                        segmentFound = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if (!segmentFound)
+                                {
+                                    pathValid = false;
+                                    break;
+                                }
+                                
+                                currTrans = nextTrans;
+                            }
+                            
+                            if (pathValid)
+                                return currTrans.gameObject;
                         }
                     }
                     
-                    // If still not found, return null
-                    if (nextTransform == null)
-                        return null;
-                    
-                    currentTransform = nextTransform;
+                    // If not found by direct name match, try more aggressive approaches
+                    // Search all objects in scene for matching paths or names
+                    foreach (var sceneRoot in sceneRootObjects)
+                    {
+                        // Try to find by reconstructing path from this root
+                        string rootPath = FixUtility.GetFullPath(sceneRoot.transform);
+                        string targetRootPath = segments[0];
+                        
+                        // If paths don't match at all, continue
+                        if (!rootPath.EndsWith(targetRootPath, StringComparison.OrdinalIgnoreCase) &&
+                            !targetRootPath.EndsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                            
+                        // Try to find the rest of the path
+                        if (segments.Length == 1)
+                            return sceneRoot;
+                            
+                        // Try to find by navigating from this root
+                        var result = TryFindInHierarchy(sceneRoot.transform, segments, 1);
+                        if (result != null)
+                            return result;
+                    }
                 }
                 
-                return currentTransform.gameObject;
+                // If everything else failed, try a last-resort approach using recursion
+                // This might be expensive but can find deeply nested objects
+                for (int sceneIdx = 0; sceneIdx < SceneManager.sceneCount; sceneIdx++)
+                {
+                    Scene scene = SceneManager.GetSceneAt(sceneIdx);
+                    if (!scene.isLoaded) continue;
+                    
+                    GameObject[] sceneRootObjects = scene.GetRootGameObjects();
+                    
+                    foreach (var root in sceneRootObjects)
+                    {
+                        // For the last segment, try to find it anywhere in this hierarchy
+                        string lastSegment = segments[segments.Length - 1];
+                        var result = FindGameObjectByNameRecursive(root.transform, lastSegment);
+                        if (result != null)
+                        {
+                            // Check if the whole path matches
+                            string foundPath = FixUtility.GetFullPath(result.transform);
+                            if (foundPath.EndsWith(fullPath, StringComparison.OrdinalIgnoreCase) ||
+                                fullPath.EndsWith(foundPath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                return result;
+                            }
+                            
+                            // If just the name matches but not the full path, still return it
+                            // since it might be the closest match
+                            Logger.LogInfo($"Found object with matching name '{lastSegment}' but path doesn't match. Found: {foundPath}, Expected: {fullPath}");
+                            return result;
+                        }
+                    }
+                }
+                
+                return null;
             }
             catch (Exception ex)
             {
-                Logger.LogError($"Error in FindObjectByPath: {ex.Message}");
+                Logger.LogError($"Error in FindObjectByPath for '{fullPath}': {ex.Message}");
                 return null;
             }
+        }
+
+        // Helper method to find GameObjects by name recursively
+        private GameObject FindGameObjectByNameRecursive(Transform parent, string name)
+        {
+            if (parent.name == name || parent.name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                return parent.gameObject;
+            
+            foreach (Transform child in parent)
+            {
+                GameObject result = FindGameObjectByNameRecursive(child, name);
+                if (result != null)
+                    return result;
+            }
+            
+            return null;
+        }
+
+        // Helper method to try finding an object by traversing path segments
+        private GameObject TryFindInHierarchy(Transform current, string[] segments, int startIndex)
+        {
+            if (startIndex >= segments.Length)
+                return current.gameObject;
+            
+            foreach (Transform child in current)
+            {
+                if (child.name == segments[startIndex] || 
+                    child.name.Equals(segments[startIndex], StringComparison.OrdinalIgnoreCase))
+                {
+                    return TryFindInHierarchy(child, segments, startIndex + 1);
+                }
+            }
+            
+            return null;
         }
     }
 }
