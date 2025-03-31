@@ -342,7 +342,8 @@ namespace TransformCacher
                 return false;
                 
             // Skip temporary objects
-            if (obj.name.StartsWith("TEMP_") || obj.name.StartsWith("tmp_"))
+            if (obj.name.StartsWith("TEMP_") || obj.name.StartsWith("tmp_") || 
+                obj.name == "InvisibleHighlighter") // Added this check
                 return false;
                 
             // Skip UI elements
@@ -352,7 +353,7 @@ namespace TransformCacher
             // Skip objects with certain components
             if (obj.GetComponent<Camera>() != null ||
                 obj.GetComponent<Light>() != null ||
-                obj.GetComponentInChildren<Component>()?.GetType().Name == "ParticleSystem") // Fixed ParticleSystem check
+                obj.GetComponentInChildren<Component>()?.GetType().Name == "ParticleSystem")
                 return false;
                 
             // Only bake objects with renderers
