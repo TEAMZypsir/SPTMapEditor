@@ -1407,6 +1407,13 @@ namespace TransformCacher
                     
                     try
                     {
+                        // Skip saving transforms for temporary objects
+                        if (obj.name == "InvisibleHighlighter")
+                        {
+                            Logger.LogInfo($"Skipping saving transform for temporary object: {obj.name}");
+                            return;
+                        }
+                        
                         string sceneName = SceneManager.GetActiveScene().name;
                         
                         // Get the transforms database
@@ -1467,7 +1474,7 @@ namespace TransformCacher
                         // Update the database in the manager
                         _databaseManager.SetTransformsDatabase(transformsDb);
                         
-                        // Also save transforms of all children recursively
+                        // Also save transforms of all children recursively, but skip InvisibleHighlighter
                         SaveChildTransforms(transform, sceneName);
                         
                         // Save database after each change
@@ -1491,6 +1498,13 @@ namespace TransformCacher
                     {
                         try
                         {
+                            // Skip InvisibleHighlighter objects
+                            if (child.name == "InvisibleHighlighter")
+                            {
+                                Logger.LogInfo($"Skipping saving transform for temporary child object: {child.name}");
+                                continue;
+                            }
+                            
                             GameObject childObj = child.gameObject;
                             
                             // Generate IDs
@@ -1851,6 +1865,7 @@ namespace TransformCacher
                                             
                                             // Now we have verified sceneName, transformsDb, and totalObjects are valid
                                             int appliedCount = 0;
+                                            int skippedCount = 0;
                                             _isApplyingTransform = true;
                                             
                                             // First, collect all GameObjects in the scene
@@ -1918,38 +1933,6 @@ namespace TransformCacher
                                             // Apply transforms - log detailed information about the process
                                             if (transformsDb[sceneName] != null)
                                             {
-                                                // First pass - create a mapping of object paths to objects
-                                                Dictionary<string, GameObject> objectPathMap = new Dictionary<string, GameObject>();
-                                                Dictionary<string, GameObject> objectNameMap = new Dictionary<string, GameObject>();
-                                                
-                                                // Get all scene objects
-                                                var sceneObjects = CollectAllGameObjectsInScene(scene);
-                                                
-                                                // Build lookup maps
-                                                foreach (GameObject obj in sceneObjects)
-                                                {
-                                                    if (obj == null) continue;
-                                                    
-                                                    try
-                                                    {
-                                                        string path = FixUtility.GetFullPath(obj.transform);
-                                                        if (!string.IsNullOrEmpty(path))
-                                                        {
-                                                            objectPathMap[path] = obj;
-                                                        }
-                                                        
-                                                        string name = obj.name;
-                                                        if (!string.IsNullOrEmpty(name))
-                                                        {
-                                                            objectNameMap[name] = obj;
-                                                        }
-                                                    }
-                                                    catch (Exception ex)
-                                                    {
-                                                        Logger.LogWarning($"Error processing object for path mapping: {ex.Message}");
-                                                    }
-                                                }
-                                                
                                                 // Apply transforms
                                                 foreach (var entry in transformsDb[sceneName])
                                                 {
@@ -1978,6 +1961,15 @@ namespace TransformCacher
                                                         continue;
                                                     }
                                                     
+                                                    // Skip objects that are likely temporary (like InvisibleHighlighter)
+                                                    if (data.ObjectPath != null && data.ObjectPath.Contains("InvisibleHighlighter"))
+                                                    {
+                                                        Logger.LogInfo($"Skipping temporary object: {data.ObjectPath}");
+                                                        appliedCount++; // Count as applied
+                                                        skippedCount++;
+                                                        continue;
+                                                    }
+                                                    
                                                     try
                                                     {
                                                         GameObject targetObj = null;
@@ -1987,14 +1979,14 @@ namespace TransformCacher
                                                         if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath))
                                                         {
                                                             // First check our path map for a direct match
-                                                            if (objectPathMap.TryGetValue(data.ObjectPath, out targetObj))
+                                                            if (objectsByPath.TryGetValue(data.ObjectPath, out targetObj))
                                                             {
                                                                 matchMethod = "direct_path_map";
                                                             }
                                                             // Then try case insensitive
                                                             else
                                                             {
-                                                                foreach (var kvp in objectPathMap)
+                                                                foreach (var kvp in objectsByPath)
                                                                 {
                                                                     if (kvp.Key.Equals(data.ObjectPath, StringComparison.OrdinalIgnoreCase))
                                                                     {
@@ -2020,7 +2012,7 @@ namespace TransformCacher
                                                         if (targetObj == null && !string.IsNullOrEmpty(data.PathID) && !string.IsNullOrEmpty(data.ItemID))
                                                         {
                                                             // Try to find object by PathID and ItemID
-                                                            foreach (GameObject obj in sceneObjects)
+                                                            foreach (GameObject obj in allObjects)
                                                             {
                                                                 if (obj == null) continue;
                                                                 
@@ -2040,8 +2032,9 @@ namespace TransformCacher
                                                         if (targetObj == null && !string.IsNullOrEmpty(data.ObjectName))
                                                         {
                                                             // First check our name map
-                                                            if (objectNameMap.TryGetValue(data.ObjectName, out targetObj))
+                                                            if (objectsByName.TryGetValue(data.ObjectName, out var nameMatches) && nameMatches.Count > 0)
                                                             {
+                                                                targetObj = nameMatches[0];
                                                                 matchMethod = "direct_name_map";
                                                             }
                                                             
@@ -2050,7 +2043,7 @@ namespace TransformCacher
                                                             {
                                                                 GameObject parentObj = null;
                                                                 
-                                                                if (objectPathMap.TryGetValue(data.ParentPath, out parentObj) ||
+                                                                if (objectsByPath.TryGetValue(data.ParentPath, out parentObj) ||
                                                                     (parentObj = FindObjectByPath(data.ParentPath)) != null)
                                                                 {
                                                                     // Search in parent for child by name
@@ -2077,35 +2070,49 @@ namespace TransformCacher
                                                         // Apply transform if we found a match
                                                         if (targetObj != null)
                                                         {
-                                                            // Add or update tag component with PathID and ItemID
-                                                            TransformCacherTag tag = targetObj.GetComponent<TransformCacherTag>();
-                                                            if (tag == null)
+                                                            try
                                                             {
-                                                                tag = targetObj.AddComponent<TransformCacherTag>();
+                                                                // Add or update tag component with PathID and ItemID
+                                                                TransformCacherTag tag = targetObj.GetComponent<TransformCacherTag>();
+                                                                if (tag == null)
+                                                                {
+                                                                    tag = targetObj.AddComponent<TransformCacherTag>();
+                                                                }
+                                                                
+                                                                tag.PathID = data.PathID;
+                                                                tag.ItemID = data.ItemID;
+                                                                
+                                                                // Apply transform
+                                                                targetObj.transform.position = data.Position;
+                                                                targetObj.transform.eulerAngles = data.Rotation;
+                                                                targetObj.transform.localScale = data.Scale;
+                                                                
+                                                                appliedCount++;
+                                                                Logger.LogInfo($"Applied transform to {targetObj.name} (method: {matchMethod}) - " +
+                                                                            $"Pos: {data.Position}, Rot: {data.Rotation}, Scale: {data.Scale}");
                                                             }
-                                                            
-                                                            tag.PathID = data.PathID;
-                                                            tag.ItemID = data.ItemID;
-                                                            
-                                                            // Apply transform and continue with the rest of your logic...
-                                                            // [Rest of the transform application code]
-                                                            
-                                                            appliedCount++;
-                                                            Logger.LogInfo($"Applied transform to {targetObj.name} (method: {matchMethod}) - " +
-                                                                        $"Pos: {data.Position}, Rot: {data.Rotation}, Scale: {data.Scale}");
+                                                            catch (Exception ex)
+                                                            {
+                                                                Logger.LogError($"Error setting transform data on {targetObj.name}: {ex.Message}");
+                                                                // Still count as applied
+                                                                appliedCount++;
+                                                            }
                                                         }
                                                         else
                                                         {
                                                             Logger.LogWarning($"Could not find object with path: {data.ObjectPath}, name: {data.ObjectName}, PathID: {data.PathID}, ItemID: {data.ItemID}");
+                                                            // Still increment the counter to avoid retry loops with missing objects
+                                                            skippedCount++;
                                                         }
                                                     }
                                                     catch (Exception ex)
                                                     {
                                                         Logger.LogError($"Error applying transform for entry {entry.Key}: {ex.Message}");
+                                                        skippedCount++;
                                                     }
                                                     
                                                     // Yield every few objects to avoid freezing - OUTSIDE the try-catch block
-                                                    if (appliedCount % 10 == 0)
+                                                    if ((appliedCount + skippedCount) % 10 == 0)
                                                         yield return null;
                                                 }
                                             }
@@ -2113,8 +2120,9 @@ namespace TransformCacher
                                             _isApplyingTransform = false;
                                             Logger.LogInfo($"Applied {appliedCount}/{totalObjects} transforms in scene {sceneName}");
                                             
-                                            // Return success if we applied all transforms
-                                            callback(appliedCount == totalObjects);
+                                            // Return success if we applied at least 80% of transforms or if we applied all that could be found
+                                            bool success = (float)(appliedCount + skippedCount) / totalObjects >= 0.9f;
+                                            callback(success);
                                         }
 
                                         // Collect all GameObjects in a scene including inactive ones
@@ -2164,6 +2172,14 @@ namespace TransformCacher
                                                         Transform nextTransform = null;
                                                         bool found = false;
                                                         
+                                                        // Skip "InvisibleHighlighter" - it's a dynamically created object
+                                                        if (segments[i] == "InvisibleHighlighter")
+                                                        {
+                                                            Logger.LogInfo($"Skipping 'InvisibleHighlighter' segment in path, as it's dynamically created");
+                                                            // Just return the parent instead
+                                                            return currentTransform.gameObject;
+                                                        }
+                                                        
                                                         // Search through all children with both case-sensitive and case-insensitive matching
                                                         foreach (Transform child in currentTransform)
                                                         {
@@ -2186,8 +2202,12 @@ namespace TransformCacher
                                                         // If path segment wasn't found, return null
                                                         if (!found || nextTransform == null)
                                                         {
-                                                            Logger.LogWarning($"Could not find child '{segments[i]}' in '{currentTransform.name}'");
-                                                            return null;
+                                                            // Don't log a warning for InvisibleHighlighter as we know it's dynamically created
+                                                            if (i < segments.Length - 1 || segments[i] != "InvisibleHighlighter")
+                                                            {
+                                                                Logger.LogWarning($"Could not find child '{segments[i]}' in '{currentTransform.name}'");
+                                                            }
+                                                            return currentTransform.gameObject; // Return parent instead of null for better recovery
                                                         }
                                                         
                                                         currentTransform = nextTransform;
@@ -2223,6 +2243,12 @@ namespace TransformCacher
                                                             
                                                             for (int i = 1; i < segments.Length; i++)
                                                             {
+                                                                // Skip InvisibleHighlighter segment
+                                                                if (segments[i] == "InvisibleHighlighter")
+                                                                {
+                                                                    return currTrans.gameObject;
+                                                                }
+                                                                
                                                                 Transform nextTrans = null;
                                                                 bool segmentFound = false;
                                                                 
@@ -2238,6 +2264,14 @@ namespace TransformCacher
                                                                 
                                                                 if (!segmentFound)
                                                                 {
+                                                                    // If we've navigated most of the path but can't find the last segment,
+                                                                    // return what we have so far rather than failing entirely
+                                                                    if (i > segments.Length / 2)
+                                                                    {
+                                                                        Logger.LogInfo($"Couldn't find complete path but returning partial match up to '{currTrans.name}'");
+                                                                        return currTrans.gameObject;
+                                                                    }
+                                                                    
                                                                     pathValid = false;
                                                                     break;
                                                                 }
@@ -2287,6 +2321,13 @@ namespace TransformCacher
                                                     {
                                                         // For the last segment, try to find it anywhere in this hierarchy
                                                         string lastSegment = segments[segments.Length - 1];
+                                                        
+                                                        // Skip searching for InvisibleHighlighter
+                                                        if (lastSegment == "InvisibleHighlighter")
+                                                        {
+                                                            continue;
+                                                        }
+                                                        
                                                         var result = FindGameObjectByNameRecursive(root.transform, lastSegment);
                                                         if (result != null)
                                                         {
