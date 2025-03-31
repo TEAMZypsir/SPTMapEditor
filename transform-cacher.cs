@@ -15,7 +15,6 @@ namespace TransformCacher
         public string UniqueId { get; private set; }
         public string PathID { get; set; }
         public string ItemID { get; set; }
-
         public bool IsSpawned { get; set; } = false;
         public bool IsDestroyed { get; set; } = false;
         
@@ -209,11 +208,11 @@ namespace TransformCacher
             // Initialize categories
             InitializeCategories();
             
-            int maxPrefabsToLoad = 10000; // Increased from 5000 to find more objects
+            int maxPrefabsToLoad = 30000; // Increased significantly to capture more objects
             int prefabsProcessed = 0;
             int prefabsAdded = 0;
             
-            // First collect all GameObjects in the scene hierarchy
+            // First collect all GameObjects in the scene hierarchy (including inactive)
             List<GameObject> allSceneObjects = new List<GameObject>();
             
             // Get all currently loaded scenes
@@ -269,8 +268,8 @@ namespace TransformCacher
             {
                 prefabsProcessed++;
                 
-                // Check if this object should be added as a prefab (less restrictive criteria)
-                bool shouldAdd = ShouldAddAsPrefabImproved(obj);
+                // Check if this object should be added as a prefab (much less restrictive criteria)
+                bool shouldAdd = ShouldIncludeAsPrefab(obj);
                 
                 if (shouldAdd)
                 {
@@ -328,23 +327,8 @@ namespace TransformCacher
             Logger.LogInfo($"Successfully loaded {_availablePrefabs.Count} prefabs across {_prefabCategories.Count} categories");
         }
 
-        // Helper method to collect all GameObjects in a hierarchy recursively
-        private void CollectGameObjectsRecursively(GameObject obj, List<GameObject> collection)
-        {
-            if (obj == null) return;
-            
-            // Add the current object to the collection
-            collection.Add(obj);
-            
-            // Process all children
-            foreach (Transform child in obj.transform)
-            {
-                CollectGameObjectsRecursively(child.gameObject, collection);
-            }
-        }
-
-        // Less restrictive ShouldAddAsPrefab method
-        private bool ShouldAddAsPrefabImproved(GameObject obj)
+        // New much less restrictive method to include more objects
+        private bool ShouldIncludeAsPrefab(GameObject obj)
         {
             if (obj == null) return false;
             
@@ -354,54 +338,18 @@ namespace TransformCacher
                 if (obj.name.Contains("UnityExplorer") || 
                     obj.name.Contains("BepInEx") ||
                     obj.name.StartsWith("TEMP_") ||
-                    obj.name.StartsWith("tmp_") ||
-                    obj.name.Contains("Canvas") && obj.GetComponent<Canvas>() != null)
+                    obj.name.StartsWith("tmp_"))
                     return false;
                 
-                // Skip camera, light, and pure utility objects - but allow their parents/containers
-                if ((obj.GetComponent<Camera>() != null && obj.transform.childCount == 0) || 
-                    (obj.GetComponent<Light>() != null && obj.transform.childCount == 0) ||
-                    (obj.GetComponent<Canvas>() != null && obj.transform.childCount == 0))
-                    return false;
-                    
-                // Check for visual components or colliders - either direct or in children
-                bool hasRenderer = obj.GetComponent<Renderer>() != null;
-                bool hasCollider = obj.GetComponent<Collider>() != null;
-                bool hasImportantComponent = obj.GetComponent<Light>() != null ||
-                                            obj.GetComponent<ParticleSystem>() != null ||
-                                            obj.name.Contains("Effect") ||
-                                            obj.name.Contains("Spotlight") ||
-                                            obj.name.Contains("light");
-                        
-                if (!hasRenderer && !hasCollider && !hasImportantComponent)
-                {
-                    // Check for components in immediate children before rejecting
-                    bool hasChildWithImportantComponent = false;
-                    foreach (Transform child in obj.transform)
-                    {
-                        if (child.GetComponent<Renderer>() != null || 
-                            child.GetComponent<Collider>() != null ||
-                            child.GetComponent<Light>() != null ||
-                            child.GetComponent<ParticleSystem>() != null ||
-                            child.name.Contains("Effect") ||
-                            child.name.Contains("Spotlight") ||
-                            child.name.Contains("light"))
-                        {
-                            hasChildWithImportantComponent = true;
-                            break;
-                        }
-                    }
-                    
-                    // If neither the object nor its immediate children have important components, skip
-                    if (!hasChildWithImportantComponent)
-                        return false;
-                }
-                
-                // Always include objects with specific keywords in their paths
+                // Include objects with specific keywords in paths (VERY inclusive)
                 string path = FixUtility.GetFullPath(obj.transform).ToLower();
+                
+                // Specifically include objects like the ones in the example
                 if (path.Contains("workbench") || 
                     path.Contains("highlight") || 
-                    path.Contains("laptop") || 
+                    path.Contains("transform") ||
+                    path.Contains("laptop") ||
+                    path.Contains("spotlight") ||
                     path.Contains("light") ||
                     path.Contains("effect") ||
                     path.Contains("model") ||
@@ -415,8 +363,52 @@ namespace TransformCacher
                     return true;
                 }
                 
-                // For other objects, include them if they meet basic criteria
-                return hasRenderer || hasCollider || hasImportantComponent || obj.transform.childCount > 0;
+                // Include objects with specific components
+                if (obj.GetComponent<Renderer>() != null ||
+                    obj.GetComponent<Light>() != null ||
+                    obj.GetComponent<MeshFilter>() != null ||
+                    obj.GetComponent<Collider>() != null ||
+                    obj.GetComponent<ParticleSystem>() != null)
+                {
+                    return true;
+                }
+                
+                // Check for these components in immediate children
+                foreach (Transform child in obj.transform)
+                {
+                    if (child.GetComponent<Renderer>() != null || 
+                        child.GetComponent<Light>() != null ||
+                        child.GetComponent<ParticleSystem>() != null)
+                    {
+                        return true;
+                    }
+                }
+                
+                // Include certain object types regardless
+                string objName = obj.name.ToLower();
+                if (objName.Contains("light") ||
+                    objName.Contains("lamp") ||
+                    objName.Contains("spotlight") ||
+                    objName.Contains("effect") ||
+                    objName.Contains("particle") ||
+                    objName.Contains("door") ||
+                    objName.Contains("window") ||
+                    objName.Contains("weapon") ||
+                    objName.Contains("item") ||
+                    objName.Contains("loot") ||
+                    objName.Contains("container"))
+                {
+                    return true;
+                }
+                
+                // Include if it has more than 2 children (might be a container)
+                if (obj.transform.childCount > 2)
+                {
+                    return true;
+                }
+                
+                // Default to false for other objects
+                return false;
             }
             catch (Exception)
             {
@@ -1249,7 +1241,8 @@ namespace TransformCacher
                 
                 // Instantiate the prefab
                 GameObject spawnedObj = Instantiate(prefab);
-                spawnedObj.name = prefab.name + "_spawned";
+                string originalName = prefab.name;
+                spawnedObj.name = originalName + "_spawned";
                 
                 // Position in front of camera
                 Vector3 spawnPos = mainCamera.transform.position + mainCamera.transform.forward * 3f;
@@ -1260,11 +1253,13 @@ namespace TransformCacher
                 spawnedObj.SetActive(true);
                 
                 // Tag the object and mark as spawned
-// Tag the object and mark as spawned
                 TransformCacherTag tag = spawnedObj.AddComponent<TransformCacherTag>();
                 tag.IsSpawned = true;
                 tag.PathID = FixUtility.GeneratePathID(spawnedObj.transform);
                 tag.ItemID = FixUtility.GenerateItemID(spawnedObj.transform);
+                
+                // Process all children to ensure they're tagged properly
+                TagAllChildren(spawnedObj.transform);
                 
                 // Save the transform data
                 SaveTransform(spawnedObj);
@@ -1274,13 +1269,38 @@ namespace TransformCacher
                 string uniqueId = FixUtility.GenerateUniqueId(spawnedObj.transform);
                 
                 var transformsDb = _databaseManager.GetTransformsDatabase();
-                if (transformsDb.ContainsKey(sceneName) && transformsDb[sceneName].ContainsKey(uniqueId))
+                if (!transformsDb.ContainsKey(sceneName))
+                {
+                    transformsDb[sceneName] = new Dictionary<string, TransformData>();
+                }
+                
+                if (transformsDb[sceneName].ContainsKey(uniqueId))
                 {
                     transformsDb[sceneName][uniqueId].IsSpawned = true;
-                    transformsDb[sceneName][uniqueId].PrefabPath = prefab.name;
-                    _databaseManager.SetTransformsDatabase(transformsDb);
-                    _databaseManager.SaveTransformsDatabase();
+                    // Store the original prefab name (without the _spawned suffix)
+                    transformsDb[sceneName][uniqueId].PrefabPath = originalName;
+                    
+                    // Also store the full path to the bundle if it came from a bundle
+                    if (_selectedBundle != null && !string.IsNullOrEmpty(_selectedBundle))
+                    {
+                        // Get just the relative path from the TransformCacher/bundles directory
+                        string bundlesPath = Path.Combine(Paths.PluginPath, "TransformCacher", "bundles");
+                        string relativePath = _selectedBundle;
+                        
+                        if (_selectedBundle.StartsWith(bundlesPath))
+                        {
+                            relativePath = _selectedBundle.Substring(bundlesPath.Length).TrimStart('\\', '/');
+                        }
+                        
+                        // Store the relative path as a property to ensure it works across installations
+                        Logger.LogInfo($"Setting prefab path to: {relativePath}");
+                        transformsDb[sceneName][uniqueId].PrefabPath = relativePath;
+                    }
                 }
+                
+                // Make sure to save database updates
+                _databaseManager.SetTransformsDatabase(transformsDb);
+                _databaseManager.SaveTransformsDatabase();
                 
                 // Select the new object
                 _currentInspectedObject = spawnedObj;
@@ -1294,6 +1314,31 @@ namespace TransformCacher
             catch (Exception ex)
             {
                 Logger.LogError($"Error spawning object: {ex.Message}");
+            }
+        }
+
+        // Helper method to tag all children of a spawned object
+        private void TagAllChildren(Transform parent)
+        {
+            if (parent == null) return;
+            
+            foreach (Transform child in parent)
+            {
+                // Skip if already tagged
+                if (child.gameObject.GetComponent<TransformCacherTag>() == null)
+                {
+                    // Tag the child
+                    TransformCacherTag childTag = child.gameObject.AddComponent<TransformCacherTag>();
+                    childTag.PathID = FixUtility.GeneratePathID(child);
+                    childTag.ItemID = FixUtility.GenerateItemID(child);
+                    childTag.IsSpawned = true;
+                    
+                    // Log the tagging
+                    Logger.LogInfo($"Tagged child object: {child.name} with ID: {childTag.PathID}");
+                }
+                
+                // Process children recursively
+                TagAllChildren(child);
             }
         }
 
