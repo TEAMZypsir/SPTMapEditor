@@ -6,7 +6,6 @@ using System.Linq;
 using System.Reflection;
 using BepInEx;
 using UnityEngine;
-using UnityEngine.AssetBundleModule;
 using UnityEngine.SceneManagement;
 
 namespace TransformCacher
@@ -471,77 +470,6 @@ namespace TransformCacher
                 return false;
             }
         }
-
-        public void SpawnObject(GameObject prefab)
-    {
-        if (prefab == null)
-        {
-            Logger.LogWarning("No prefab selected to spawn");
-            return;
-        }
-        
-        try
-        {
-            // Find camera for positioning
-            Camera mainCamera = Camera.main;
-            if (mainCamera == null)
-            {
-                mainCamera = FindObjectOfType<Camera>();
-                if (mainCamera == null)
-                {
-                    Logger.LogWarning("No camera found to position spawned object");
-                    return;
-                }
-            }
-            
-            // Instantiate the prefab
-            GameObject spawnedObj = Instantiate(prefab);
-            spawnedObj.name = prefab.name + "_spawned";
-            
-            // Position in front of camera
-            Vector3 spawnPos = mainCamera.transform.position + mainCamera.transform.forward * 3f;
-            spawnedObj.transform.position = spawnPos;
-            spawnedObj.transform.rotation = mainCamera.transform.rotation;
-            
-            // Make sure it's activated
-            spawnedObj.SetActive(true);
-            
-            // Tag the object and mark as spawned
-            TransformCacherTag tag = spawnedObj.AddComponent<TransformCacherTag>();
-            tag.IsSpawned = true;
-            tag.PathID = FixUtility.GeneratePathID(spawnedObj.transform);
-            tag.ItemID = FixUtility.GenerateItemID(spawnedObj.transform);
-            
-            // Save the transform data
-            SaveTransform(spawnedObj);
-            
-            // Update database to mark as spawned
-            string sceneName = spawnedObj.scene.name;
-            string uniqueId = FixUtility.GenerateUniqueId(spawnedObj.transform);
-            
-            var transformsDb = _databaseManager.GetTransformsDatabase();
-            if (transformsDb.ContainsKey(sceneName) && transformsDb[sceneName].ContainsKey(uniqueId))
-            {
-                transformsDb[sceneName][uniqueId].IsSpawned = true;
-                transformsDb[sceneName][uniqueId].PrefabPath = prefab.name;
-                _databaseManager.SetTransformsDatabase(transformsDb);
-                _databaseManager.SaveTransformsDatabase();
-            }
-            
-            // Select the new object
-            _currentInspectedObject = spawnedObj;
-            _lastPosition = spawnedObj.transform.position;
-            _lastLocalPosition = spawnedObj.transform.localPosition;
-            _lastRotation = spawnedObj.transform.rotation;
-            _lastScale = spawnedObj.transform.localScale;
-            
-            Logger.LogInfo($"Spawned object: {spawnedObj.name} at {spawnPos}");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError($"Error spawning object: {ex.Message}");
-        }
-    }
 
         private void AddPrefabToCollection(GameObject obj)
         {
