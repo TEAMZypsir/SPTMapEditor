@@ -44,7 +44,7 @@ namespace TransformCacher
             Logger = BepInEx.Logging.Logger.CreateLogSource("DatabaseManager");
 
             // Set up save paths
-            string baseDir = Path.Combine(Paths.PluginPath, "TransformCacher");
+            string baseDir = TransformCacherPlugin.PluginFolder;
             _transformsPath = Path.Combine(baseDir, "transforms.json");
             _bakedIdsPath = Path.Combine(baseDir, "baked_ids.json");
 

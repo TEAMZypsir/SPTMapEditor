@@ -1199,7 +1199,7 @@ namespace TransformCacher
                     if (!string.IsNullOrEmpty(bundlePath))
                     {
                         // Convert to a relative path if it's an absolute path
-                        string basePath = Path.Combine(Paths.PluginPath, "TransformCacher");
+                        string basePath = TransformCacherPlugin.PluginFolder;
                         string relativePath = bundlePath;
                         
                         // If it's an absolute path, make it relative to the plugin path
@@ -1514,13 +1514,19 @@ namespace TransformCacher
             // Initialize loading notification
             LoadingNotification loadingNotification = LoadingNotification.Instance;
             
-            // Wait for scene to properly initialize
-            float initialDelay = TransformCacherPlugin.TransformDelay != null ? TransformCacherPlugin.TransformDelay.Value : 1.0f;
+            // Wait for scene to be fully loaded
+            float initialDelay = TransformCacherPlugin.TransformDelay != null ? TransformCacherPlugin.TransformDelay.Value : 2.0f;
             Logger.LogInfo($"Waiting {initialDelay}s before applying transforms to {scene.name}");
             yield return new WaitForSeconds(initialDelay);
             
+            // Additional wait to ensure game is fully loaded
+            // Wait for at least another second after initialDelay
+            yield return new WaitForSeconds(1.0f);
+            
             int maxAttempts = TransformCacherPlugin.MaxRetries != null ? TransformCacherPlugin.MaxRetries.Value : 3;
             bool success = false;
+            
+            loadingNotification.SetLoadingMessage($"Starting transformation for {scene.name}");
             
             while (_transformApplicationAttempts < maxAttempts && !success)
             {
@@ -1550,7 +1556,7 @@ namespace TransformCacher
                     // Show any errors that occurred during loading
                     loadingNotification.ShowErrorPopupIfNeeded();
                     
-                    // Clear the loading message
+                    // Clear loading message
                     loadingNotification.SetLoadingMessage("");
                     
                     yield break;
@@ -1559,6 +1565,7 @@ namespace TransformCacher
                 if (_transformApplicationAttempts < maxAttempts)
                 {
                     Logger.LogInfo($"Transform application attempt {_transformApplicationAttempts} incomplete, retrying in {RETRY_DELAY}s");
+                    loadingNotification.SetLoadingMessage($"Transform retry in {RETRY_DELAY}s");
                     yield return new WaitForSeconds(RETRY_DELAY);
                 }
                 else
@@ -1569,7 +1576,7 @@ namespace TransformCacher
                 }
             }
         }
-        
+                
         private IEnumerator ApplyDestroyedObjects(string sceneName)
         {
             // Initialize notification for tracking
@@ -1708,7 +1715,7 @@ namespace TransformCacher
                                 string relativeBundlePath = prefabPath.Substring(7); // Remove "bundle:" prefix
                                 
                                 // Convert to full path based on current plugin location
-                                string basePath = Path.Combine(Paths.PluginPath, "TransformCacher");
+                                string basePath = TransformCacherPlugin.PluginFolder;
                                 string fullBundlePath = Path.Combine(basePath, relativeBundlePath);
                                 
                                 // Ensure the path is valid
@@ -1869,6 +1876,7 @@ namespace TransformCacher
                 if (string.IsNullOrEmpty(sceneName))
                 {
                     Logger.LogError("Scene name is null or empty, cannot apply transforms");
+
                     callback(false); // Failure
                     shouldContinue = false;
                 }
