@@ -186,8 +186,7 @@ namespace TransformCacher
                 
             try
             {
-                // Status box to show mod is active
-                GUI.Box(new Rect(10, 10, 200, 30), "Transform Cacher Active");
+                
                 
                 // Main window
                 _windowRect = GUI.Window(0, _windowRect, DrawMainWindow, "Transform Cacher");
@@ -1071,7 +1070,16 @@ namespace TransformCacher
                 Logger.LogInfo($"Spawn Selected Object button clicked for: {(_selectedPrefab != null ? _selectedPrefab.name : "null")}");
                 try
                 {
-                    _transformCacher.SpawnObject(_selectedPrefab);
+                    // If we're in bundle selector mode and have a selected bundle, include the path
+                    if (_showBundleSelector && !string.IsNullOrEmpty(_selectedBundle))
+                    {
+                        _transformCacher.SpawnObject(_selectedPrefab, _selectedBundle);
+                    }
+                    else
+                    {
+                        _transformCacher.SpawnObject(_selectedPrefab);
+                    }
+                    
                     // Clear selection and hide the selector
                     _selectedPrefab = null;
                     _showSpawnItemSelector = false;
