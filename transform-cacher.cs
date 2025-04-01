@@ -1139,7 +1139,7 @@ namespace TransformCacher
         }
         
         // Spawn a new object from a prefab
-        public void SpawnObject(GameObject prefab)
+        public void SpawnObject(GameObject prefab, string bundlePath = "")
         {
             if (prefab == null)
             {
@@ -1191,7 +1191,30 @@ namespace TransformCacher
                 if (transformsDb.ContainsKey(sceneName) && transformsDb[sceneName].ContainsKey(uniqueId))
                 {
                     transformsDb[sceneName][uniqueId].IsSpawned = true;
-                    transformsDb[sceneName][uniqueId].PrefabPath = prefab.name;
+                    
+                    // If this is from a bundle, store a relative path
+                    if (!string.IsNullOrEmpty(bundlePath))
+                    {
+                        // Convert to a relative path if it's an absolute path
+                        string basePath = Path.Combine(Paths.PluginPath, "TransformCacher");
+                        string relativePath = bundlePath;
+                        
+                        // If it's an absolute path, make it relative to the plugin path
+                        if (Path.IsPathRooted(bundlePath) && bundlePath.Contains(basePath))
+                        {
+                            relativePath = bundlePath.Replace(basePath, "").TrimStart('\\', '/');
+                        }
+                        
+                        // Store with bundle prefix
+                        transformsDb[sceneName][uniqueId].PrefabPath = "bundle:" + relativePath;
+                        Logger.LogInfo($"Storing relative bundle path in PrefabPath: bundle:{relativePath}");
+                    }
+                    else
+                    {
+                        // Otherwise just store the prefab name as before
+                        transformsDb[sceneName][uniqueId].PrefabPath = prefab.name;
+                    }
+                    
                     _databaseManager.SetTransformsDatabase(transformsDb);
                     _databaseManager.SaveTransformsDatabase();
                 }
@@ -1638,11 +1661,73 @@ namespace TransformCacher
                     {
                         // Try to find matching prefab
                         GameObject prefab = null;
+                        string prefabPath = entry.PrefabPath ?? "";
                         
-                        // First try by name
-                        if (!string.IsNullOrEmpty(entry.PrefabPath))
+                        // Check if this is a bundle path
+                        if (prefabPath.StartsWith("bundle:"))
                         {
-                            prefab = _availablePrefabs.FirstOrDefault(p => p != null && p.name == entry.PrefabPath);
+                            // Extract the relative bundle path from the PrefabPath
+                            string relativeBundlePath = prefabPath.Substring(7); // Remove "bundle:" prefix
+                            
+                            // Convert to full path based on current plugin location
+                            string basePath = Path.Combine(Paths.PluginPath, "TransformCacher");
+                            string fullBundlePath = Path.Combine(basePath, relativeBundlePath);
+                            
+                            // Ensure the path is valid
+                            if (File.Exists(fullBundlePath))
+                            {
+                                Logger.LogInfo($"Loading from bundle: {fullBundlePath} (relative path: {relativeBundlePath})");
+                                
+                                // Try to load from the bundle
+                                AssetBundle bundle = AssetBundle.LoadFromFile(fullBundlePath);
+                                if (bundle != null)
+                                {
+                                    try
+                                    {
+                                        // Get the first asset in the bundle
+                                        string[] assetNames = bundle.GetAllAssetNames();
+                                        if (assetNames.Length > 0)
+                                        {
+                                            prefab = bundle.LoadAsset<GameObject>(assetNames[0]);
+                                            
+                                            if (prefab == null)
+                                            {
+                                                Logger.LogWarning($"Failed to load asset from bundle: {fullBundlePath}");
+                                            }
+                                            else
+                                            {
+                                                Logger.LogInfo($"Successfully loaded asset from bundle: {fullBundlePath}");
+                                            }
+                                        }
+                                        else
+                                        {
+                                            Logger.LogWarning($"No assets found in bundle: {fullBundlePath}");
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Logger.LogError($"Error loading asset from bundle: {ex.Message}");
+                                    }
+                                    finally
+                                    {
+                                        // Unload the bundle but keep the loaded assets
+                                        bundle.Unload(false);
+                                    }
+                                }
+                                else
+                                {
+                                    Logger.LogWarning($"Failed to load bundle: {fullBundlePath}");
+                                }
+                            }
+                            else
+                            {
+                                Logger.LogWarning($"Bundle file not found: {fullBundlePath}");
+                            }
+                        }
+                        // First try by name if not a bundle
+                        else if (!string.IsNullOrEmpty(prefabPath))
+                        {
+                            prefab = _availablePrefabs.FirstOrDefault(p => p != null && p.name == prefabPath);
                         }
                         
                         // If not found, try to find by similar name
