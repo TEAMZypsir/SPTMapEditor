@@ -102,6 +102,9 @@ namespace TransformCacher
                 Destroy(gameObject);
                 return;
             }
+
+            LoadingNotification loadingNotification = LoadingNotification.Instance;
+            loadingNotification.Initialize();
                         
             _instance = this;
             DontDestroyOnLoad(gameObject);
@@ -1508,6 +1511,9 @@ namespace TransformCacher
 
         public IEnumerator ApplyTransformsWithRetry(Scene scene)
         {
+            // Initialize loading notification
+            LoadingNotification loadingNotification = LoadingNotification.Instance;
+            
             // Wait for scene to properly initialize
             float initialDelay = TransformCacherPlugin.TransformDelay != null ? TransformCacherPlugin.TransformDelay.Value : 1.0f;
             Logger.LogInfo($"Waiting {initialDelay}s before applying transforms to {scene.name}");
@@ -1522,6 +1528,7 @@ namespace TransformCacher
                 Logger.LogInfo($"Attempt {_transformApplicationAttempts}/{maxAttempts} to apply transforms to {scene.name}");
                 
                 // Run the coroutine and wait for it to complete
+                loadingNotification.SetLoadingMessage("Moving Items");
                 yield return StartCoroutine(ApplyTransformsToScene(scene, (result) => { success = result; }));
                 
                 if (success)
@@ -1529,10 +1536,22 @@ namespace TransformCacher
                     Logger.LogInfo($"Successfully applied transforms to {scene.name} on attempt {_transformApplicationAttempts}");
                     
                     // Also handle destroyed objects
+                    loadingNotification.SetLoadingMessage("Deleting Items");
                     yield return StartCoroutine(ApplyDestroyedObjects(scene.name));
                     
                     // Also respawn any spawned objects
+                    loadingNotification.SetLoadingMessage("Generating Custom Assets");
                     yield return StartCoroutine(RespawnObjects(scene.name));
+                    
+                    // Run a final cleanup pass to catch any missed objects
+                    loadingNotification.SetLoadingMessage("Final Cleanup");
+                    yield return StartCoroutine(PerformFinalCleanup(scene));
+                    
+                    // Show any errors that occurred during loading
+                    loadingNotification.ShowErrorPopupIfNeeded();
+                    
+                    // Clear the loading message
+                    loadingNotification.SetLoadingMessage("");
                     
                     yield break;
                 }
@@ -1545,15 +1564,21 @@ namespace TransformCacher
                 else
                 {
                     Logger.LogWarning($"Failed to apply all transforms after {maxAttempts} attempts");
+                    loadingNotification.AddError("Transform Application", $"Failed to apply all transforms after {maxAttempts} attempts");
+                    loadingNotification.ShowErrorPopupIfNeeded();
                 }
             }
         }
         
         private IEnumerator ApplyDestroyedObjects(string sceneName)
         {
+            // Initialize notification for tracking
+            LoadingNotification loadingNotification = LoadingNotification.Instance;
+    
             Logger.LogInfo($"Applying destroyed objects for scene: {sceneName}");
             
             int hiddenObjects = 0;
+            int failedObjects = 0;
             
             // Get the transforms database
             var transformsDb = _databaseManager.GetTransformsDatabase();
@@ -1622,14 +1647,20 @@ namespace TransformCacher
             
             Logger.LogInfo($"Applied destruction to {hiddenObjects} objects in scene {sceneName}");
             
+            loadingNotification.TrackProgress("Deleting Items", hiddenObjects, failedObjects);
+
             yield break;
         }
         
         private IEnumerator RespawnObjects(string sceneName)
         {
+            // Initialize notification for tracking
+            LoadingNotification loadingNotification = LoadingNotification.Instance;
+            
             Logger.LogInfo($"Respawning objects for scene: {sceneName}");
             
             int respawnedCount = 0;
+            int failedCount = 0;
             
             // Get the transforms database
             var transformsDb = _databaseManager.GetTransformsDatabase();
@@ -1637,6 +1668,7 @@ namespace TransformCacher
             // Wait for prefabs to be loaded
             if (!_prefabsLoaded)
             {
+                loadingNotification.SetLoadingMessage("Generating Custom Assets - Loading prefabs...");
                 Logger.LogInfo("Waiting for prefabs to load...");
                 float waitTime = 0;
                 while (!_prefabsLoaded && waitTime < 10f)
@@ -1648,6 +1680,7 @@ namespace TransformCacher
                 if (!_prefabsLoaded)
                 {
                     Logger.LogWarning("Prefabs still not loaded after 10 seconds, trying to load now");
+                    loadingNotification.SetLoadingMessage("Generating Custom Assets - Forcing prefab load...");
                     yield return StartCoroutine(LoadPrefabs());
                 }
             }
@@ -1655,6 +1688,9 @@ namespace TransformCacher
             // Check database for spawned objects
             if (transformsDb.ContainsKey(sceneName))
             {
+                int totalToSpawn = transformsDb[sceneName].Values.Count(data => data.IsSpawned && !data.IsDestroyed);
+                loadingNotification.SetLoadingMessage($"Generating Custom Assets - Found {totalToSpawn} objects to spawn");
+                
                 foreach (var entry in transformsDb[sceneName].Values)
                 {
                     if (entry.IsSpawned && !entry.IsDestroyed)
@@ -1663,123 +1699,160 @@ namespace TransformCacher
                         GameObject prefab = null;
                         string prefabPath = entry.PrefabPath ?? "";
                         
-                        // Check if this is a bundle path
-                        if (prefabPath.StartsWith("bundle:"))
+                        try
                         {
-                            // Extract the relative bundle path from the PrefabPath
-                            string relativeBundlePath = prefabPath.Substring(7); // Remove "bundle:" prefix
-                            
-                            // Convert to full path based on current plugin location
-                            string basePath = Path.Combine(Paths.PluginPath, "TransformCacher");
-                            string fullBundlePath = Path.Combine(basePath, relativeBundlePath);
-                            
-                            // Ensure the path is valid
-                            if (File.Exists(fullBundlePath))
+                            // Check if this is a bundle path
+                            if (prefabPath.StartsWith("bundle:"))
                             {
-                                Logger.LogInfo($"Loading from bundle: {fullBundlePath} (relative path: {relativeBundlePath})");
+                                // Extract the relative bundle path from the PrefabPath
+                                string relativeBundlePath = prefabPath.Substring(7); // Remove "bundle:" prefix
                                 
-                                // Try to load from the bundle
-                                AssetBundle bundle = AssetBundle.LoadFromFile(fullBundlePath);
-                                if (bundle != null)
+                                // Convert to full path based on current plugin location
+                                string basePath = Path.Combine(Paths.PluginPath, "TransformCacher");
+                                string fullBundlePath = Path.Combine(basePath, relativeBundlePath);
+                                
+                                // Ensure the path is valid
+                                if (File.Exists(fullBundlePath))
                                 {
-                                    try
+                                    Logger.LogInfo($"Loading from bundle: {fullBundlePath} (relative path: {relativeBundlePath})");
+                                    
+                                    // Try to load from the bundle
+                                    AssetBundle bundle = AssetBundle.LoadFromFile(fullBundlePath);
+                                    if (bundle != null)
                                     {
-                                        // Get the first asset in the bundle
-                                        string[] assetNames = bundle.GetAllAssetNames();
-                                        if (assetNames.Length > 0)
+                                        try
                                         {
-                                            prefab = bundle.LoadAsset<GameObject>(assetNames[0]);
-                                            
-                                            if (prefab == null)
+                                            // Get the first asset in the bundle
+                                            string[] assetNames = bundle.GetAllAssetNames();
+                                            if (assetNames.Length > 0)
                                             {
-                                                Logger.LogWarning($"Failed to load asset from bundle: {fullBundlePath}");
+                                                prefab = bundle.LoadAsset<GameObject>(assetNames[0]);
+                                                
+                                                if (prefab == null)
+                                                {
+                                                    Logger.LogWarning($"Failed to load asset from bundle: {fullBundlePath}");
+                                                    loadingNotification.AddError("Generating Custom Assets", $"Failed to load asset from bundle: {fullBundlePath}");
+                                                }
+                                                else
+                                                {
+                                                    Logger.LogInfo($"Successfully loaded asset from bundle: {fullBundlePath}");
+                                                }
                                             }
                                             else
                                             {
-                                                Logger.LogInfo($"Successfully loaded asset from bundle: {fullBundlePath}");
+                                                Logger.LogWarning($"No assets found in bundle: {fullBundlePath}");
+                                                loadingNotification.AddError("Generating Custom Assets", $"No assets found in bundle: {fullBundlePath}");
                                             }
                                         }
-                                        else
+                                        catch (Exception ex)
                                         {
-                                            Logger.LogWarning($"No assets found in bundle: {fullBundlePath}");
+                                            Logger.LogError($"Error loading asset from bundle: {ex.Message}");
+                                            loadingNotification.AddError("Generating Custom Assets", $"Error loading asset from bundle: {ex.Message}");
+                                        }
+                                        finally
+                                        {
+                                            // Unload the bundle but keep the loaded assets
+                                            bundle.Unload(false);
                                         }
                                     }
-                                    catch (Exception ex)
+                                    else
                                     {
-                                        Logger.LogError($"Error loading asset from bundle: {ex.Message}");
-                                    }
-                                    finally
-                                    {
-                                        // Unload the bundle but keep the loaded assets
-                                        bundle.Unload(false);
+                                        Logger.LogWarning($"Failed to load bundle: {fullBundlePath}");
+                                        loadingNotification.AddError("Generating Custom Assets", $"Failed to load bundle: {fullBundlePath}");
                                     }
                                 }
                                 else
                                 {
-                                    Logger.LogWarning($"Failed to load bundle: {fullBundlePath}");
+                                    Logger.LogWarning($"Bundle file not found: {fullBundlePath}");
+                                    loadingNotification.AddError("Generating Custom Assets", $"Bundle file not found: {fullBundlePath}");
+                                }
+                            }
+                            // First try by name if not a bundle
+                            else if (!string.IsNullOrEmpty(prefabPath))
+                            {
+                                prefab = _availablePrefabs.FirstOrDefault(p => p != null && p.name == prefabPath);
+                            }
+                            
+                            // If not found, try to find by similar name
+                            if (prefab == null && !string.IsNullOrEmpty(entry.ObjectName))
+                            {
+                                string baseName = entry.ObjectName.Replace("_spawned", "");
+                                prefab = _availablePrefabs.FirstOrDefault(p => p != null && p.name == baseName);
+                            }
+                            
+                            // Use a default if nothing found
+                            if (prefab == null && _availablePrefabs.Count > 0)
+                            {
+                                prefab = _availablePrefabs[0];
+                                Logger.LogWarning($"Couldn't find specific prefab for {entry.ObjectName}, using default");
+                            }
+                            
+                            // Spawn the object if we have a prefab
+                            if (prefab != null)
+                            {
+                                try
+                                {
+                                    // Instantiate and position
+                                    GameObject spawnedObj = Instantiate(prefab);
+                                    spawnedObj.name = entry.ObjectName;
+                                    spawnedObj.transform.position = entry.Position;
+                                    spawnedObj.transform.rotation = Quaternion.Euler(entry.Rotation);
+                                    spawnedObj.transform.localScale = entry.Scale;
+                                    spawnedObj.SetActive(true);
+                                    
+                                    // Tag it
+                                    TransformCacherTag tag = spawnedObj.AddComponent<TransformCacherTag>();
+                                    tag.IsSpawned = true;
+                                    tag.PathID = entry.PathID;
+                                    tag.ItemID = entry.ItemID;
+                                    
+                                    respawnedCount++;
+                                    Logger.LogInfo($"Successfully respawned object: {entry.ObjectName}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    failedCount++;
+                                    Logger.LogError($"Error respawning object {entry.ObjectName}: {ex.Message}");
+                                    loadingNotification.AddError("Generating Custom Assets", $"Failed to spawn {entry.ObjectName}: {ex.Message}");
                                 }
                             }
                             else
                             {
-                                Logger.LogWarning($"Bundle file not found: {fullBundlePath}");
+                                failedCount++;
+                                Logger.LogWarning($"No suitable prefab found for {entry.ObjectName}");
+                                loadingNotification.AddError("Generating Custom Assets", $"No suitable prefab found for {entry.ObjectName}");
                             }
                         }
-                        // First try by name if not a bundle
-                        else if (!string.IsNullOrEmpty(prefabPath))
+                        catch (Exception ex)
                         {
-                            prefab = _availablePrefabs.FirstOrDefault(p => p != null && p.name == prefabPath);
+                            failedCount++;
+                            Logger.LogError($"Error during respawn process for {entry.ObjectName}: {ex.Message}");
+                            loadingNotification.AddError("Generating Custom Assets", $"Error during respawn process for {entry.ObjectName}: {ex.Message}");
                         }
                         
-                        // If not found, try to find by similar name
-                        if (prefab == null && !string.IsNullOrEmpty(entry.ObjectName))
+                        // Yield occasionally to prevent freezing
+                        if ((respawnedCount + failedCount) % 5 == 0)
                         {
-                            string baseName = entry.ObjectName.Replace("_spawned", "");
-                            prefab = _availablePrefabs.FirstOrDefault(p => p != null && p.name == baseName);
-                        }
-                        
-                        // Use a default if nothing found
-                        if (prefab == null && _availablePrefabs.Count > 0)
-                        {
-                            prefab = _availablePrefabs[0];
-                        }
-                        
-                        // Spawn the object if we have a prefab
-                        if (prefab != null)
-                        {
-                            try
-                            {
-                                // Instantiate and position
-                                GameObject spawnedObj = Instantiate(prefab);
-                                spawnedObj.name = entry.ObjectName;
-                                spawnedObj.transform.position = entry.Position;
-                                spawnedObj.transform.rotation = Quaternion.Euler(entry.Rotation);
-                                spawnedObj.transform.localScale = entry.Scale;
-                                spawnedObj.SetActive(true);
-                                
-                                // Tag it
-                                TransformCacherTag tag = spawnedObj.AddComponent<TransformCacherTag>();
-                                tag.IsSpawned = true;
-                                tag.PathID = entry.PathID;
-                                tag.ItemID = entry.ItemID;
-                                
-                                respawnedCount++;
-                            }
-                            catch (Exception ex)
-                            {
-                                Logger.LogError($"Error respawning object: {ex.Message}");
-                            }
+                            loadingNotification.SetLoadingMessage($"Generating Custom Assets - Processed {respawnedCount + failedCount}/{totalToSpawn}");
+                            yield return null;
                         }
                     }
                 }
             }
             
-            Logger.LogInfo($"Respawned {respawnedCount} objects in scene {sceneName}");
+            Logger.LogInfo($"Respawned {respawnedCount} objects in scene {sceneName}, {failedCount} failed");
+            
+            // Track progress
+            loadingNotification.TrackProgress("Generating Custom Assets", respawnedCount, failedCount);
             
             yield break;
         }
 
         private IEnumerator ApplyTransformsToScene(Scene scene, Action<bool> callback)
         {
+            // Initialize notification for tracking
+            LoadingNotification loadingNotification = LoadingNotification.Instance;
+    
             // Wait until end of frame to ensure all objects are fully loaded
             yield return new WaitForEndOfFrame();
             
@@ -2104,6 +2177,9 @@ namespace TransformCacher
             _isApplyingTransform = false;
             Logger.LogInfo($"Applied {appliedCount}/{totalObjects} transforms in scene {sceneName}");
             
+            // Track progress and errors
+            loadingNotification.TrackProgress("Moving Items", appliedCount, skippedCount);
+            
             // Return success if we applied at least 80% of transforms or if we applied all that could be found
             bool success = (float)(appliedCount + skippedCount) / totalObjects >= 0.9f;
             callback(success);
@@ -2124,6 +2200,72 @@ namespace TransformCacher
             }
             
             return results;
+        }
+
+        private IEnumerator PerformFinalCleanup(Scene scene)
+        {
+            // Initialize notification for tracking
+            LoadingNotification loadingNotification = LoadingNotification.Instance;
+            
+            Logger.LogInfo($"Performing final cleanup for scene: {scene.name}");
+            
+            string sceneName = scene.name;
+            int deletedItems = 0;
+            int failedDeletions = 0;
+            
+            // Get the transforms database
+            var transformsDb = _databaseManager.GetTransformsDatabase();
+            if (transformsDb == null || !transformsDb.ContainsKey(sceneName))
+            {
+                loadingNotification.TrackProgress("Final Cleanup", 0, 0);
+                yield break;
+            }
+            
+            // Find all objects that should be destroyed
+            var toDestroy = new List<GameObject>();
+            
+            // Check for objects marked as destroyed in the database but still active
+            foreach (var entry in transformsDb[sceneName].Values)
+            {
+                if (entry.IsDestroyed)
+                {
+                    GameObject obj = FindObjectByPath(entry.ObjectPath);
+                    if (obj != null && obj.activeInHierarchy)
+                    {
+                        toDestroy.Add(obj);
+                    }
+                }
+            }
+            
+            // Try to destroy these objects
+            foreach (var obj in toDestroy)
+            {
+                try
+                {
+                    obj.SetActive(false);
+                    deletedItems++;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError($"Failed to disable object {obj.name} during final cleanup: {ex.Message}");
+                    failedDeletions++;
+                    loadingNotification.AddError("Final Cleanup", $"Failed to disable {obj.name}: {ex.Message}");
+                }
+                
+                // Yield occasionally to avoid freezing
+                if (deletedItems % 20 == 0)
+                {
+                    yield return null;
+                }
+            }
+            
+            // Log results
+            Logger.LogInfo($"Final cleanup: Deleted {deletedItems} missed objects, {failedDeletions} failed");
+            
+            // Track progress
+            loadingNotification.TrackProgress("Final Cleanup", deletedItems, failedDeletions);
+            
+            yield break;
         }
 
         private GameObject FindObjectByPath(string fullPath)

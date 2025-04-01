@@ -156,6 +156,9 @@ namespace TransformCacher
         public static ConfigEntry<bool> EnablePersistence;
         public static ConfigEntry<bool> EnableDebugGUI;
         public static ConfigEntry<bool> EnableObjectHighlight;
+
+        public static ConfigEntry<bool> EnableLoadingMessages;
+        public static ConfigEntry<bool> ShowErrorPopups;
         public static ConfigEntry<KeyboardShortcut> SaveHotkey;
         public static ConfigEntry<KeyboardShortcut> TagHotkey;
         public static ConfigEntry<KeyboardShortcut> DestroyHotkey;
@@ -189,6 +192,11 @@ namespace TransformCacher
                 // Initialize components
                 GameObject managerObject = new GameObject("TransformCacherManager");
                 DontDestroyOnLoad(managerObject);
+
+                // Initialize LoadingNotification
+                var loadingNotification = LoadingNotification.Instance;
+                loadingNotification.Initialize();
+                Log.LogInfo("LoadingNotification initialized");
 
                 // Initialize DatabaseManager first as it's needed by other components
                 DatabaseManager databaseManager = DatabaseManager.Instance;
@@ -242,6 +250,11 @@ namespace TransformCacher
 
         private void InitializeConfiguration()
         {
+            EnableLoadingMessages = Config.Bind("General", "EnableLoadingMessages", true, 
+                "Enable messages during loading showing transform processing status");
+                
+            ShowErrorPopups = Config.Bind("General", "ShowErrorPopups", true, 
+                "Show popup with errors that occurred during loading");
             // Plugin settings
             EnablePersistence = Config.Bind("General", "EnablePersistence", true, 
                 "Enable persistence of object transforms across game sessions");
