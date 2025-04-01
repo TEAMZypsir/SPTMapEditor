@@ -5,6 +5,7 @@ using System.Linq;
 using BepInEx;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using EFT;
 
 namespace TransformCacher
 {
@@ -288,7 +289,7 @@ namespace TransformCacher
                 _bundleDirectories.Clear();
                 
                 // Get path to bundle directory
-                string baseDir = Path.Combine(Paths.PluginPath, "TransformCacher", "bundles");
+                string baseDir = Path.Combine(TransformCacherPlugin.PluginFolder, "bundles");
                 
                 // Create directory if it doesn't exist
                 if (!Directory.Exists(baseDir))

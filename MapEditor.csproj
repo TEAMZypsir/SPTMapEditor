@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net472</TargetFramework>
+    <TargetFramework>net471</TargetFramework>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>disable</Nullable>
@@ -21,6 +21,9 @@
     </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Assembly-CSharp.dll</HintPath>
     </Reference>
 
     <!-- Unity Engine References -->
@@ -56,6 +59,9 @@
     </Reference>
     <Reference Include="UnityEngine.ParticleSystemModule">
       <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.ParticleSystemModule.dll</HintPath>
+    </Reference>
+    <Reference Include="Comfort.Unity">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Comfort.Unity.dll</HintPath>
     </Reference>
     
     <!-- Unity Explorer dependencies -->

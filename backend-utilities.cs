@@ -171,6 +171,9 @@ namespace TransformCacher
         
         // Logging
         public static ManualLogSource Log;
+
+        public static string PluginPath => Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+        public static string PluginFolder => Path.Combine(PluginPath, "TransformCacher");
         
         // Initialized flag
         private bool _initialized = false;
@@ -192,11 +195,6 @@ namespace TransformCacher
                 // Initialize components
                 GameObject managerObject = new GameObject("TransformCacherManager");
                 DontDestroyOnLoad(managerObject);
-
-                // Initialize LoadingNotification
-                var loadingNotification = LoadingNotification.Instance;
-                loadingNotification.Initialize();
-                Log.LogInfo("LoadingNotification initialized");
 
                 // Initialize DatabaseManager first as it's needed by other components
                 DatabaseManager databaseManager = DatabaseManager.Instance;

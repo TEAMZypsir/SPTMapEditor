@@ -5,6 +5,7 @@ using System.Linq;
 using BepInEx;
 using UnityEngine;
 
+
 namespace TransformCacher
 {
     /// <summary>
@@ -18,7 +19,7 @@ namespace TransformCacher
         private static Dictionary<string, AssetBundle> _loadedBundles = new Dictionary<string, AssetBundle>();
         
         // Path to bundles directory
-        private static string _bundleDirectory => Path.Combine(Paths.PluginPath, "TransformCacher", "bundles");
+        private static string _bundleDirectory => Path.Combine(TransformCacherPlugin.PluginFolder, "bundles");
         
         /// <summary>
         /// Get all bundle files in the bundles directory and subdirectories
