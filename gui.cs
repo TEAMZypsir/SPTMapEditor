@@ -186,8 +186,7 @@ namespace TransformCacher
                 
             try
             {
-                // Status box to show mod is active
-                GUI.Box(new Rect(10, 10, 200, 30), "Transform Cacher Active");
+                
                 
                 // Main window
                 _windowRect = GUI.Window(0, _windowRect, DrawMainWindow, "Transform Cacher");
