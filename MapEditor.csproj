@@ -23,7 +23,7 @@
       <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Newtonsoft.Json.dll</HintPath>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Assembly-CSharp.dll</HintPath>
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Assembly-CSharp-cleaned.dll</HintPath>
     </Reference>
 
     <!-- Unity Engine References -->
@@ -60,10 +60,39 @@
     <Reference Include="UnityEngine.ParticleSystemModule">
       <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\UnityEngine.ParticleSystemModule.dll</HintPath>
     </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Unity.TextMeshPro.dll</HintPath>
+    </Reference>
     <Reference Include="Comfort.Unity">
       <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Comfort.Unity.dll</HintPath>
     </Reference>
-    
+    <Reference Include="Comfort">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Comfort.dll</HintPath>
+    </Reference>
+    <Reference Include="DOTween">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\DOTween.dll</HintPath>
+    </Reference>
+    <Reference Include="Sirenix">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\references\Sirenix.Serialization.dll</HintPath>
+    </Reference>
+
+    <!-- AssetRipper References -->
+    <Reference Include="AssetRipper.Assets">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\src\AssetRipper\AssetRipper.Assets.dll</HintPath>
+    </Reference>
+    <Reference Include="AssetRipper.Import">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\src\AssetRipper\AssetRipper.Import.dll</HintPath>
+    </Reference>
+    <Reference Include="AssetRipper.IO.Files">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\src\AssetRipper\AssetRipper.IO.Files.dll</HintPath>
+    </Reference>
+    <Reference Include="AssetRipper.Numerics">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\src\AssetRipper\AssetRipper.Numerics.dll</HintPath>
+    </Reference>
+    <Reference Include="AssetRipper.SerializationLogic">
+      <HintPath>F:\TarkovHDRework\Client Mods\MapEditor\src\AssetRipper\AssetRipper.SerializationLogic.dll</HintPath>
+    </Reference>
+
     <!-- Unity Explorer dependencies -->
     <Reference Include="UniverseLib.Mono">
       <HintPath>F:\SPT UNITY MODDING 3.11\BepInEx\plugins\sinai-dev-UnityExplorer\UniverseLib.Mono.dll</HintPath>

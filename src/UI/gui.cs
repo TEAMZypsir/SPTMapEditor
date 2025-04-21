@@ -18,7 +18,6 @@ namespace TransformCacher
         // References to other components
         private TransformCacher _transformCacher;
         private DatabaseManager _databaseManager;
-        private TransformIdBaker _idBaker;
         
         // UI State for main window
         private Rect _windowRect;
@@ -46,16 +45,6 @@ namespace TransformCacher
         // For database scene selection
         private int _selectedSceneIndex = 0;
         
-        // TransformIdBaker UI
-        private bool _showBakerWindow = false;
-        private Rect _bakerWindowRect;
-        private Vector2 _bakerScrollPosition;
-        private Vector2 _sceneScrollPosition;
-        private string _ignorePrefix = "Weapon spawn";
-        private List<string> _scenesToBake = new List<string>();
-        private bool _bakeMultipleScenes = false;
-        private bool _showBakerSettings = false;
-        
         // Window resizing
         private Rect _resizeHandle = new Rect(0, 0, 10, 10);
         private bool _isResizing = false;
@@ -65,79 +54,30 @@ namespace TransformCacher
         
         // Logging
         private static BepInEx.Logging.ManualLogSource Logger;
+
+        // Scroll positions for new tabs
+        private Vector2 _pendingChangesScrollPosition = Vector2.zero;
+        private Vector2 _modifiedScenesScrollPosition = Vector2.zero;
+
+        // Baker window state
+        private Rect _bakerWindowRect;
         
-        public void Initialize(TransformCacher transformCacher, DatabaseManager databaseManager, TransformIdBaker idBaker)
+        public void Initialize(TransformCacher transformCacher, DatabaseManager databaseManager)
         {
-            try
-            {
-                _transformCacher = transformCacher;
-                _databaseManager = databaseManager;
-                _idBaker = idBaker;
-                
-                // Add debug log to verify component references
-                if (_transformCacher == null)
-                {
-                    Logger.LogError("TransformCacher reference is null during initialization");
-                }
-                
-                if (_databaseManager == null)
-                {
-                    Logger.LogError("DatabaseManager reference is null during initialization");
-                }
-                
-                if (_idBaker == null)
-                {
-                    Logger.LogError("TransformIdBaker reference is null during initialization");
-                    
-                    // Try to find it in the scene if it wasn't passed correctly
-                    _idBaker = FindObjectOfType<TransformIdBaker>();
-                    
-                    if (_idBaker == null)
-                    {
-                        Logger.LogError("Failed to find TransformIdBaker in the scene");
-                        
-                        // Create one as a last resort
-                        GameObject idBakerObj = new GameObject("TransformIdBaker");
-                        _idBaker = idBakerObj.AddComponent<TransformIdBaker>();
-                        
-                        if (_idBaker != null)
-                        {
-                            _idBaker.Initialize();
-                            Logger.LogWarning("Created new TransformIdBaker as fallback");
-                        }
-                        else
-                        {
-                            Logger.LogError("Failed to create TransformIdBaker component");
-                        }
-                    }
-                    else
-                    {
-                        Logger.LogWarning("Found TransformIdBaker in scene instead of passed reference");
-                    }
-                }
-                
-                // Get logger
-                Logger = BepInEx.Logging.Logger.CreateLogSource("TransformCacherGUI");
-                
-                // Scan for bundle files
-                RefreshBundleFiles();
-                
-                // Initialize window positions
-                InitializeWindowPositions();
-                
-                Logger.LogInfo("TransformCacherGUI initialized successfully");
-            }
-            catch (Exception ex)
-            {
-                if (Logger != null)
-                {
-                    Logger.LogError($"Error during TransformCacherGUI initialization: {ex.Message}\n{ex.StackTrace}");
-                }
-                else
-                {
-                    Debug.LogError($"Error during TransformCacherGUI initialization: {ex.Message}\n{ex.StackTrace}");
-                }
-            }
+            _transformCacher = transformCacher;
+            _databaseManager = databaseManager;
+            
+            // Initialize the logger
+            Logger = BepInEx.Logging.Logger.CreateLogSource("TransformCacherGUI");
+            
+            // Set up window position
+            _windowRect = new Rect(20, 20, 400, 500);
+            
+            // Initialize baker window (if needed)
+            _bakerWindowRect = new Rect(Screen.width - 420, 20, 400, 600);
+            
+            // Reset window rect when resolution changes
+            OnResolutionChanged();
         }
         
         private void Start()
@@ -155,31 +95,6 @@ namespace TransformCacher
             // No need to check for mouse toggle hotkey anymore
         }
         
-        private void InitializeWindowPositions()
-        {
-            // Size for main window
-            float windowWidth = 600;
-            float windowHeight = 800;
-            
-            // Position the window based on config
-            if (TransformCacherPlugin.UISide != null && TransformCacherPlugin.UISide.Value == UISideOption.Right)
-            {
-                // Right side
-                _windowRect = new Rect(Screen.width - windowWidth - 20, 100, windowWidth, windowHeight);
-            }
-            else
-            {
-                // Left side (default)
-                _windowRect = new Rect(20, 100, windowWidth, windowHeight);
-            }
-            
-            // Baker window position (offset from main window)
-            _bakerWindowRect = new Rect(_windowRect.x + 50, _windowRect.y + 50, 500, 500);
-            
-            // Make sure windows are within screen bounds
-            EnsureWindowsVisible();
-        }
-        
         public void OnGUI()
         {
             if (TransformCacherPlugin.EnableDebugGUI == null || !TransformCacherPlugin.EnableDebugGUI.Value)
@@ -187,8 +102,6 @@ namespace TransformCacher
                 
             try
             {
-                
-                
                 // Main window
                 _windowRect = GUI.Window(0, _windowRect, DrawMainWindow, "Transform Cacher");
                 
@@ -199,37 +112,11 @@ namespace TransformCacher
                     Rect selectorRect = new Rect(_windowRect.x + _windowRect.width + 10, _windowRect.y, 500, 500);
                     GUI.Window(1, selectorRect, DrawSpawnItemSelector, "Spawn Item");
                 }
-                
-                // Baker window - only draw when it should be shown
-                if (_showBakerWindow && _idBaker != null)
-                {
-                    GUI.Window(100, _bakerWindowRect, DrawBakerWindow, "Transform ID Baker");
-                }
             }
             catch (Exception ex)
             {
                 Logger.LogError($"Error in OnGUI: {ex.Message}\n{ex.StackTrace}");
             }
-        }
-        
-        // Ensure windows are visible on screen
-        private void EnsureWindowsVisible()
-        {
-            // Main window
-            _windowRect = new Rect(
-                Mathf.Clamp(_windowRect.x, 0, Screen.width - _windowRect.width),
-                Mathf.Clamp(_windowRect.y, 0, Screen.height - _windowRect.height),
-                _windowRect.width,
-                _windowRect.height
-            );
-            
-            // Baker window
-            _bakerWindowRect = new Rect(
-                Mathf.Clamp(_bakerWindowRect.x, 0, Screen.width - _bakerWindowRect.width),
-                Mathf.Clamp(_bakerWindowRect.y, 0, Screen.height - _bakerWindowRect.height),
-                _bakerWindowRect.width,
-                _bakerWindowRect.height
-            );
         }
         
         private void OnDisable()
@@ -415,8 +302,49 @@ namespace TransformCacher
                     
                     // Always ensure GUI.enabled is true for buttons
                     GUI.enabled = true;
-                    
-                    // Tagging and saving - with null checks and logging
+
+                    // Replace the free camera toggle code with this:
+                    bool freeCamActive = MapEditorFreeCam.Instance != null && MapEditorFreeCam.Instance.IsActive;
+                    bool userPrefers = MapEditorFreeCam.UserPrefersFreeCamera;
+
+                    // Create a button style that looks like a toggle
+                    GUIStyle toggleButtonStyle = new GUIStyle(GUI.skin.button);
+                    toggleButtonStyle.alignment = TextAnchor.MiddleLeft;
+                    toggleButtonStyle.fontSize = 12;
+                    toggleButtonStyle.fontStyle = FontStyle.Bold;
+                    toggleButtonStyle.padding = new RectOffset(10, 10, 5, 5);
+
+                    // Use the extension method
+                    if (MapEditorFreeCamGUIExtension.DrawFreeCamToggle(freeCamActive, toggleButtonStyle))
+                    {
+                        // Toggle the state
+                        bool newState = !freeCamActive;
+                        Logger.LogInfo($"Free Cam button toggled to: {newState}");
+                        
+                        // Save the state to config
+                        if (TransformCacherPlugin.EnableFreeCamOnStartup != null)
+                        {
+                            TransformCacherPlugin.EnableFreeCamOnStartup.Value = newState;
+                            Logger.LogInfo($"Saved free camera preference: {newState}");
+                        }
+                        
+                        // Create the freecam instance if needed
+                        if (MapEditorFreeCam.Instance == null)
+                        {
+                            Logger.LogInfo("Creating new MapEditorFreeCam instance");
+                            GameObject freeCamObj = new GameObject("MapEditorFreeCam");
+                            freeCamObj.AddComponent<MapEditorFreeCam>();
+                        }
+                        
+                        // Tell MapEditorFreeCam to toggle
+                        if (MapEditorFreeCam.Instance != null)
+                        {
+                            MapEditorFreeCam.Instance.ToggleFreeCam();
+                        }
+                    }
+
+                    GUILayout.Space(5);
+
                     if (GUILayout.Button("Save All Tagged Objects", GUILayout.Height(30)))
                     {
                         Logger.LogInfo("Save All Tagged Objects button clicked");
@@ -516,35 +444,6 @@ namespace TransformCacher
                             Logger.LogError("Cannot apply transforms - TransformCacher reference is null");
                         }
                     }
-                    
-                    // Fixed: Properly enable ID Baker button
-                    GUI.enabled = true; // Always enable the button, we'll handle the null case inside
-                    if (GUILayout.Button("Open ID Baker", GUILayout.Height(30)))
-                    {
-                        Logger.LogInfo("Open ID Baker button clicked");
-                        
-                        // Explicitly toggle baker window
-                        _showBakerWindow = !_showBakerWindow;
-                        Logger.LogInfo($"ID Baker window toggled: {_showBakerWindow}");
-                        
-                        // If we're opening it and the baker is null, try to get or create it
-                        if (_showBakerWindow)
-                        {
-                            if (_idBaker == null)
-                            {
-                                _idBaker = FindObjectOfType<TransformIdBaker>();
-                                
-                                if (_idBaker == null)
-                                {
-                                    Logger.LogWarning("TransformIdBaker not found, creating a new one");
-                                    GameObject idBakerObj = new GameObject("TransformIdBaker");
-                                    _idBaker = idBakerObj.AddComponent<TransformIdBaker>();
-                                    _idBaker.Initialize();
-                                }
-                            }
-                        }
-                    }
-                    GUI.enabled = true; // Reset enabled state
 
                     GUILayout.Space(20);
                     
@@ -781,6 +680,11 @@ namespace TransformCacher
                         Logger.LogError($"Error in database section: {ex.Message}");
                         GUILayout.Label("Error displaying database statistics");
                     }
+
+                    GUILayout.Space(20);
+
+                    // Draw the new Pending Changes tab
+                    DrawPendingChangesTab();
                 }
                 finally
                 {
@@ -1105,186 +1009,71 @@ namespace TransformCacher
             GUI.DragWindow(new Rect(0, 0, 500, 20));
         }
         
-        private void DrawBakerWindow(int id)
+        private void DrawPendingChangesTab()
         {
-            // Ensure cursor is visible for UI interaction
-            Cursor.visible = true;
-            Cursor.lockState = CursorLockMode.None;
+            GUILayout.Label("Pending Changes", GUI.skin.box);
             
-            GUI.enabled = true; // Ensure GUI elements are enabled
+            string currentScene = SceneManager.GetActiveScene().name;
+            bool hasPendingChanges = DatabaseManager.Instance.HasPendingChanges(currentScene);
             
-            GUILayout.BeginVertical();
-            
-            // Scene information
-            Scene currentScene = SceneManager.GetActiveScene();
-            GUILayout.Label($"Current Scene: {currentScene.name}");
-            
-            bool isSceneBaked = _idBaker.IsSceneBaked(currentScene);
-            string bakeStatus = isSceneBaked 
-                ? "<color=green>Baked</color>"
-                : "<color=yellow>Not Baked</color>";
-                
-            // Get the number of baked objects if available
-            if (isSceneBaked)
+            if (hasPendingChanges)
             {
-                var sceneBakedIds = _databaseManager.GetBakedIdsDatabase();
-                if (sceneBakedIds.ContainsKey(currentScene.name))
+                var changes = DatabaseManager.Instance.GetPendingChanges(currentScene);
+                GUILayout.Label($"{changes.Count} unsaved changes in current scene");
+                
+                if (GUILayout.Button("Save Changes to Asset Files", GUILayout.Height(30)))
                 {
-                    int count = sceneBakedIds[currentScene.name].Count;
-                    bakeStatus += $" ({count} objects)";
+                    DatabaseManager.Instance.CommitPendingChanges();
                 }
-            }
-            
-            GUILayout.Label($"Bake Status: {bakeStatus}", new GUIStyle(GUI.skin.label) { richText = true });
-            
-            GUILayout.Space(10);
-            
-            // Settings section
-            _showBakerSettings = GUILayout.Toggle(_showBakerSettings, "Show Settings");
-            
-            if (_showBakerSettings)
-            {
-                GUILayout.BeginVertical(GUI.skin.box);
                 
-                // Ignore prefix setting
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Ignore Prefix:", GUILayout.Width(100));
-                _ignorePrefix = GUILayout.TextField(_ignorePrefix, GUILayout.Width(150));
-                GUILayout.EndHorizontal();
-                
-                GUILayout.Label("Objects with names starting with this prefix will be ignored during baking.", 
-                    EditorStyles.miniLabel);
-                
-                // Multiple scenes toggle
-                _bakeMultipleScenes = GUILayout.Toggle(_bakeMultipleScenes, "Bake Multiple Scenes");
-                
-                if (_bakeMultipleScenes)
+                if (GUILayout.Button("Discard Pending Changes", GUILayout.Height(30)))
                 {
-                    GUILayout.Space(5);
-                    GUILayout.Label("Scenes to Bake:");
-                    
-                    _sceneScrollPosition = GUILayout.BeginScrollView(_sceneScrollPosition, GUILayout.Height(100));
-                    
-                    // List all loaded scenes
-                    for (int i = 0; i < SceneManager.sceneCount; i++)
-                    {
-                        Scene scene = SceneManager.GetSceneAt(i);
-                        bool isSelected = _scenesToBake.Contains(scene.name);
-                        
-                        bool newIsSelected = GUILayout.Toggle(isSelected, scene.name);
-                        
-                        if (newIsSelected != isSelected)
-                        {
-                            if (newIsSelected)
-                            {
-                                _scenesToBake.Add(scene.name);
-                                Logger.LogInfo($"Scene added to bake list: {scene.name}");
-                            }
-                            else
-                            {
-                                _scenesToBake.Remove(scene.name);
-                                Logger.LogInfo($"Scene removed from bake list: {scene.name}");
-                            }
-                        }
-                    }
-                    
-                    GUILayout.EndScrollView();
-                    
-                    // Add unloaded scene option
+                    DatabaseManager.Instance.DiscardPendingChanges();
+                }
+                
+                // Show some details about pending changes
+                _pendingChangesScrollPosition = GUILayout.BeginScrollView(_pendingChangesScrollPosition, 
+                    GUILayout.Height(150));
+                
+                foreach (var change in changes.Values)
+                {
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label("Add Scene:", GUILayout.Width(70));
-                    string newScene = GUILayout.TextField("", GUILayout.Width(120));
-                    
-                    if (GUILayout.Button("Add", GUILayout.Width(50)) && !string.IsNullOrEmpty(newScene))
-                    {
-                        if (!_scenesToBake.Contains(newScene))
-                        {
-                            _scenesToBake.Add(newScene);
-                            Logger.LogInfo($"Scene added to bake list: {newScene}");
-                        }
-                    }
-                    
+                    GUILayout.Label(change.ObjectName);
+                    GUILayout.Label($"Pos: ({change.Position.x:F2}, {change.Position.y:F2}, {change.Position.z:F2})");
                     GUILayout.EndHorizontal();
-                    
-                    if (_scenesToBake.Count == 0)
-                    {
-                        GUILayout.Label("<color=yellow>No scenes selected</color>", 
-                            new GUIStyle(GUI.skin.label) { richText = true });
-                    }
                 }
                 
-                GUILayout.EndVertical();
+                GUILayout.EndScrollView();
+            }
+            else
+            {
+                GUILayout.Label("No pending changes in current scene");
             }
             
+            // Show modified scenes
             GUILayout.Space(10);
+            GUILayout.Label("Modified Scenes", GUI.skin.box);
             
-            // Baking controls - fix for Bake ID button
-            GUI.enabled = !_idBaker.IsBaking();
-            if (GUILayout.Button("Bake Scene IDs", GUILayout.Height(40)))
-            {
-                Logger.LogInfo("Bake Scene IDs button clicked");
-                _idBaker.StartBaking();
-            }
-            GUI.enabled = true;
+            var transformsDb = DatabaseManager.Instance.GetTransformsDatabase();
+            int modifiedSceneCount = transformsDb.Count;
             
-            // Baking progress
-            if (_idBaker.IsBaking())
+            GUILayout.Label($"{modifiedSceneCount} scenes with modifications");
+            
+            if (modifiedSceneCount > 0)
             {
-                GUILayout.Space(10);
-                GUILayout.Label(_idBaker.GetBakingStatus());
+                _modifiedScenesScrollPosition = GUILayout.BeginScrollView(_modifiedScenesScrollPosition, 
+                    GUILayout.Height(100));
                 
-                Rect progressRect = GUILayoutUtility.GetRect(100, 20);
-                EditorGUI.ProgressBar(progressRect, _idBaker.GetBakingProgress(), 
-                    $"{Mathf.RoundToInt(_idBaker.GetBakingProgress() * 100)}%");
-            }
-            
-            GUILayout.Space(10);
-            
-            // Database statistics
-            GUILayout.Label("Database Statistics", GUI.skin.box);
-            
-            _bakerScrollPosition = GUILayout.BeginScrollView(_bakerScrollPosition, GUILayout.Height(150));
-            
-            try
-            {
-                // Get baked IDs database from database manager
-                var currentBakedIdsDb = _databaseManager.GetBakedIdsDatabase();
-                
-                // Show scenes with baked IDs
-                if (currentBakedIdsDb != null && currentBakedIdsDb.Count > 0)
+                foreach (var scene in transformsDb.Keys)
                 {
-                    foreach (var scene in currentBakedIdsDb.Keys)
-                    {
-                        int count = currentBakedIdsDb[scene].Count;
-                        GUILayout.Label($"Scene '{scene}': {count} objects");
-                    }
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(scene);
+                    GUILayout.Label($"{transformsDb[scene].Count} objects");
+                    GUILayout.EndHorizontal();
                 }
-                else
-                {
-                    GUILayout.Label("No scenes have been baked yet");
-                }
+                
+                GUILayout.EndScrollView();
             }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Error displaying baked database: {ex.Message}");
-                GUILayout.Label("Error displaying baked database");
-            }
-            
-            GUILayout.EndScrollView();
-            
-            GUILayout.Space(10);
-            
-            // Close button
-            if (GUILayout.Button("Close"))
-            {
-                Logger.LogInfo("Close button clicked on baker window");
-                _showBakerWindow = false;
-            }
-            
-            GUILayout.EndVertical();
-            
-            // Allow the window to be dragged (but only from the top bar)
-            GUI.DragWindow(new Rect(0, 0, _bakerWindowRect.width, 20));
         }
         
         // UI Helper methods
@@ -1329,6 +1118,19 @@ namespace TransformCacher
                     return style;
                 }
             }
+        }
+
+        // Add this method to handle resolution changes
+        private void OnResolutionChanged()
+        {
+            float screenWidth = Screen.width;
+            float screenHeight = Screen.height;
+            
+            // Reset main window position
+            _windowRect = new Rect(20, 20, 400, 500);
+            
+            // Reset baker window position
+            _bakerWindowRect = new Rect(screenWidth - 420, 20, 400, 600);
         }
     }
 }
