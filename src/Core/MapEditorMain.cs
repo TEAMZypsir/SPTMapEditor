@@ -7,24 +7,26 @@ using System.Reflection;
 using BepInEx;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using TMPro;
+using EFT;
 
 namespace TransformCacher
 {
     public partial class TransformCacherTag : MonoBehaviour
     {
         public string UniqueId { get; private set; }
-        public string PathID { get; set; }
-        public string ItemID { get; set; }
+        public string PathID { get; set; } // Keep for backward compatibility
+        public string ItemID { get; set; } // Keep for backward compatibility
 
         public bool IsSpawned { get; set; } = false;
         public bool IsDestroyed { get; set; } = false;
         
         public void Awake()
         {
-            // Generate a unique ID based on hierarchical path and other properties
+            // Generate a simple unique ID based on hierarchical path
             UniqueId = FixUtility.GenerateUniqueId(transform);
             
-            // Generate PathID and ItemID if they don't already exist
+            // Generate PathID and ItemID if they don't already exist (for backward compatibility)
             if (string.IsNullOrEmpty(PathID))
             {
                 PathID = FixUtility.GeneratePathID(transform);
@@ -35,7 +37,7 @@ namespace TransformCacher
                 ItemID = FixUtility.GenerateItemID(transform);
             }
             
-            Debug.Log($"[TransformCacher] Tag active on: {gameObject.name} with ID: {UniqueId}, PathID: {PathID}, ItemID: {ItemID}");
+            Debug.Log($"[TransformCacher] Tag active on: {gameObject.name} with ID: {UniqueId}");
         }
     }
 
@@ -44,9 +46,6 @@ namespace TransformCacher
         private static TransformCacher _instance;
         public static TransformCacher Instance => _instance;
 
-        // Add this field at the class level
-        private TransformIdBaker _idBaker;
-        
         // Database manager reference
         private DatabaseManager _databaseManager;
         
@@ -95,6 +94,9 @@ namespace TransformCacher
         // Logging
         private static BepInEx.Logging.ManualLogSource Logger;
 
+        // Add this field at the class level:
+        private DestroyHandler _destroyHandler;
+
         private void Awake()
         {
             if (_instance != null && _instance != this)
@@ -103,8 +105,7 @@ namespace TransformCacher
                 return;
             }
 
-            LoadingNotification loadingNotification = LoadingNotification.Instance;
-            loadingNotification.Initialize();
+            EnhancedNotification.Initialize();
                         
             _instance = this;
             DontDestroyOnLoad(gameObject);
@@ -115,14 +116,10 @@ namespace TransformCacher
             // Initialize database manager
             _databaseManager = DatabaseManager.Instance;
             _databaseManager.Initialize();
-
-            // Initialize ID Baker
-            _idBaker = gameObject.AddComponent<TransformIdBaker>();
-            _idBaker.Initialize();
             
             // Initialize GUI
             _gui = gameObject.AddComponent<TransformCacherGUI>();
-            _gui.Initialize(this, _databaseManager, _idBaker);
+            _gui.Initialize(this, _databaseManager);
             
             Logger.LogInfo("DatabaseManager initialized");
             
@@ -139,6 +136,10 @@ namespace TransformCacher
             StartCoroutine(LoadPrefabs());
             
             Logger.LogInfo("TransformCacher initialized successfully");
+
+            // Initialize DestroyHandler
+            _destroyHandler = DestroyHandler.Instance;
+            _destroyHandler.Initialize();
         }
 
         // Public methods for GUI access
@@ -347,6 +348,44 @@ namespace TransformCacher
                 results.Add(child.gameObject);
                 CollectChildrenRecursively(child, results);
             }
+        }
+
+        // Helper method to collect all GameObjects in the scene
+        private List<GameObject> CollectAllGameObjectsInScene(Scene scene)
+        {
+            List<GameObject> allObjects = new List<GameObject>();
+            
+            try
+            {
+                // Get all root GameObjects in the scene
+                GameObject[] rootObjects = scene.GetRootGameObjects();
+                
+                if (rootObjects == null || rootObjects.Length == 0)
+                {
+                    Logger.LogWarning($"No root objects found in scene: {scene.name}");
+                    return allObjects;
+                }
+                
+                // For each root, process it and all its children
+                foreach (var root in rootObjects)
+                {
+                    if (root == null) continue;
+                    
+                    // Add the root object itself
+                    allObjects.Add(root);
+                    
+                    // Then recursively add all its children
+                    CollectChildrenRecursively(root.transform, allObjects);
+                }
+                
+                Logger.LogInfo($"Collected {allObjects.Count} GameObjects from scene: {scene.name}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error collecting GameObjects from scene {scene.name}: {ex.Message}");
+            }
+            
+            return allObjects;
         }
 
         // Less restrictive ShouldAddAsPrefab method
@@ -677,6 +716,12 @@ namespace TransformCacher
                     _currentScene = currentScene;
                     Logger.LogInfo($"Scene changed to: {_currentScene} (detected by periodic check)");
                     
+                    // Update free cam scene awareness
+                    if (MapEditorFreeCam.Instance != null)
+                    {
+                        MapEditorFreeCam.Instance.CheckCurrentScene();
+                    }
+                    
                     if (TransformCacherPlugin.EnablePersistence.Value && !string.IsNullOrEmpty(_currentScene))
                     {
                         // Reset attempt counter
@@ -965,180 +1010,12 @@ namespace TransformCacher
             
             try
             {
-                string sceneName = obj.scene.name;
-                string objectPath = FixUtility.GetFullPath(obj.transform);
-                string uniqueId = FixUtility.GenerateUniqueId(obj.transform);
-                
-                Logger.LogInfo($"Marking for destruction: {objectPath} with ID: {uniqueId}");
-                
-                // Add to destroyed objects cache
-                if (!_destroyedObjectsCache.ContainsKey(sceneName))
-                {
-                    _destroyedObjectsCache[sceneName] = new HashSet<string>();
-                }
-                
-                _destroyedObjectsCache[sceneName].Add(objectPath);
-                
-                // Get or add tag component
-                TransformCacherTag tag = obj.GetComponent<TransformCacherTag>();
-                if (tag == null)
-                {
-                    tag = obj.AddComponent<TransformCacherTag>();
-                    tag.PathID = FixUtility.GeneratePathID(obj.transform);
-                    tag.ItemID = FixUtility.GenerateItemID(obj.transform);
-                }
-                
-                // Mark as destroyed
-                tag.IsDestroyed = true;
-                
-                // Get the transform database
-                var transformsDb = _databaseManager.GetTransformsDatabase();
-                
-                // Make sure the scene exists in the database
-                if (!transformsDb.ContainsKey(sceneName))
-                {
-                    transformsDb[sceneName] = new Dictionary<string, TransformData>();
-                    Logger.LogInfo($"Created new scene entry in database: {sceneName}");
-                }
-                
-                // Create or update transform data
-                if (transformsDb[sceneName].ContainsKey(uniqueId))
-                {
-                    transformsDb[sceneName][uniqueId].IsDestroyed = true;
-                    Logger.LogInfo($"Updated existing transform data as destroyed: {uniqueId}");
-                }
-                else
-                {
-                    // Create new entry with new format
-                    var data = new TransformData
-                    {
-                        UniqueId = uniqueId,
-                        PathID = tag.PathID,
-                        ItemID = tag.ItemID,
-                        ObjectPath = objectPath,
-                        ObjectName = obj.name,
-                        SceneName = sceneName,
-                        Position = obj.transform.position,
-                        Rotation = obj.transform.eulerAngles,
-                        Scale = obj.transform.localScale,
-                        ParentPath = obj.transform.parent != null ? FixUtility.GetFullPath(obj.transform.parent) : "",
-                        IsDestroyed = true,
-                        IsSpawned = false,
-                        PrefabPath = "",
-                        Children = GetChildrenIds(obj.transform)
-                    };
-                    
-                    transformsDb[sceneName][uniqueId] = data;
-                    Logger.LogInfo($"Created new transform data marked as destroyed: {uniqueId}");
-                }
-                
-                // Update the database in the manager
-                _databaseManager.SetTransformsDatabase(transformsDb);
-                
-                // Process all children recursively 
-                MarkChildrenAsDestroyed(obj.transform, sceneName);
-                
-                // Hide the object immediately
-                obj.SetActive(false);
-                
-                // Save database
-                _databaseManager.SaveTransformsDatabase();
-                
-                Logger.LogInfo($"Successfully marked object and all children for destruction: {objectPath}");
+                _destroyHandler.MarkForDestruction(obj);
             }
             catch (Exception ex)
             {
-                Logger.LogError($"Error marking object for destruction: {ex.Message}\n{ex.StackTrace}");
+                Logger.LogError($"Error marking object for destruction: {ex.Message}");
             }
-        }
-        
-        // Helper to mark all children as destroyed
-        private void MarkChildrenAsDestroyed(Transform parent, string sceneName)
-        {
-            if (parent == null) return;
-            
-            // Get the transform database
-            var transformsDb = _databaseManager.GetTransformsDatabase();
-            
-            // Process each child
-            foreach (Transform child in parent)
-            {
-                try
-                {
-                    string childPath = FixUtility.GetFullPath(child);
-                    string childUniqueId = FixUtility.GenerateUniqueId(child);
-                    
-                    // Add to destroyed objects cache
-                    _destroyedObjectsCache[sceneName].Add(childPath);
-                    
-                    // Get or add tag component
-                    TransformCacherTag childTag = child.gameObject.GetComponent<TransformCacherTag>();
-                    if (childTag == null)
-                    {
-                        childTag = child.gameObject.AddComponent<TransformCacherTag>();
-                        childTag.PathID = FixUtility.GeneratePathID(child);
-                        childTag.ItemID = FixUtility.GenerateItemID(child);
-                    }
-                    
-                    // Mark as destroyed
-                    childTag.IsDestroyed = true;
-                    
-                    // Create or update transform data for child
-                    if (transformsDb[sceneName].ContainsKey(childUniqueId))
-                    {
-                        transformsDb[sceneName][childUniqueId].IsDestroyed = true;
-                    }
-                    else
-                    {
-                        // Create new entry for child with new format
-                        var childData = new TransformData
-                        {
-                            UniqueId = childUniqueId,
-                            PathID = childTag.PathID,
-                            ItemID = childTag.ItemID,
-                            ObjectPath = childPath,
-                            ObjectName = child.name,
-                            SceneName = sceneName,
-                            Position = child.position,
-                            Rotation = child.eulerAngles,
-                            Scale = child.localScale,
-                            ParentPath = FixUtility.GetFullPath(child.parent),
-                            IsDestroyed = true,
-                            IsSpawned = false,
-                            PrefabPath = "",
-                            Children = GetChildrenIds(child)
-                        };
-                        
-                        transformsDb[sceneName][childUniqueId] = childData;
-                    }
-                    
-                    // Update the database in the manager
-                    _databaseManager.SetTransformsDatabase(transformsDb);
-                    
-                    // Process this child's children recursively
-                    MarkChildrenAsDestroyed(child, sceneName);
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogError($"Error marking child for destruction: {ex.Message}");
-                }
-            }
-        }
-        
-        // Get a list of children UniqueIds
-        private List<string> GetChildrenIds(Transform parent)
-        {
-            List<string> childrenIds = new List<string>();
-            
-            if (parent == null) return childrenIds;
-            
-            foreach (Transform child in parent)
-            {
-                string childId = FixUtility.GenerateUniqueId(child);
-                childrenIds.Add(childId);
-            }
-            
-            return childrenIds;
         }
         
         // Spawn a new object from a prefab
@@ -1240,89 +1117,39 @@ namespace TransformCacher
         // Save all tagged objects
         public void SaveAllTaggedObjects()
         {
-            string sceneName = SceneManager.GetActiveScene().name;
-            var tags = GameObject.FindObjectsOfType<TransformCacherTag>();
-            
-            // Get the transforms database
-            var transformsDb = _databaseManager.GetTransformsDatabase();
-            
-            // Create scene entry if it doesn't exist
-            if (!transformsDb.ContainsKey(sceneName))
+            try
             {
-                transformsDb[sceneName] = new Dictionary<string, TransformData>();
-            }
-            
-            var updatedObjects = new Dictionary<string, TransformData>();
-
-            foreach (var tag in tags)
-            {
-                // Skip destroyed objects (but keep them in the database)
-                if (tag.IsDestroyed) continue;
+                string sceneName = SceneManager.GetActiveScene().name;
                 
-                var tr = tag.transform;
-                var uniqueId = tag.UniqueId;
+                // Find all TransformCacherTag components in the scene
+                TransformCacherTag[] tags = GameObject.FindObjectsOfType<TransformCacherTag>(true);
                 
-                if (string.IsNullOrEmpty(uniqueId))
-                {
-                    uniqueId = FixUtility.GenerateUniqueId(tr);
-                }
+                Logger.LogInfo($"Found {tags.Length} tagged objects in scene");
                 
-                // Ensure PathID and ItemID are set
-                if (string.IsNullOrEmpty(tag.PathID))
+                // Save transform data for each tagged object
+                foreach (TransformCacherTag tag in tags)
                 {
-                    tag.PathID = FixUtility.GeneratePathID(tr);
-                }
-                
-                if (string.IsNullOrEmpty(tag.ItemID))
-                {
-                    tag.ItemID = FixUtility.GenerateItemID(tr);
-                }
-                
-                var data = new TransformData
-                {
-                    UniqueId = uniqueId,
-                    PathID = tag.PathID,
-                    ItemID = tag.ItemID,
-                    ObjectPath = FixUtility.GetFullPath(tr),
-                    ObjectName = tr.name,
-                    SceneName = sceneName,
-                    Position = tr.position,
-                    Rotation = tr.eulerAngles,
-                    Scale = tr.localScale,
-                    ParentPath = tr.parent != null ? FixUtility.GetFullPath(tr.parent) : "",
-                    IsDestroyed = tag.IsDestroyed,
-                    IsSpawned = tag.IsSpawned,
-                    Children = GetChildrenIds(tr)
-                };
-                
-                // Keep the PrefabPath if it was a spawned object
-                if (tag.IsSpawned && transformsDb[sceneName].ContainsKey(uniqueId) &&
-                    !string.IsNullOrEmpty(transformsDb[sceneName][uniqueId].PrefabPath))
-                {
-                    data.PrefabPath = transformsDb[sceneName][uniqueId].PrefabPath;
-                }
-
-                updatedObjects[uniqueId] = data;
-            }
-            
-            // Preserve destroyed objects in the database
-            if (transformsDb.ContainsKey(sceneName))
-            {
-                foreach (var entry in transformsDb[sceneName])
-                {
-                    if (entry.Value.IsDestroyed && !updatedObjects.ContainsKey(entry.Key))
+                    if (tag != null && tag.gameObject != null)
                     {
-                        updatedObjects[entry.Key] = entry.Value;
+                        SaveTransform(tag.gameObject);
                     }
                 }
+                
+                // Also save any destroyed objects to assets
+                _destroyHandler.SaveDestroyedObjectsToAssets(sceneName);
+                
+                // Ask the database manager to commit all pending changes to the asset files
+                DatabaseManager.Instance.CommitPendingChanges();
+                
+                Logger.LogInfo($"All tagged objects saved and committed to asset files");
+                
+                // Show success message
+                EnhancedNotification.ShowMessage("All changes saved and applied to asset files", 3.0f);
             }
-
-            // Update database
-            transformsDb[sceneName] = updatedObjects;
-            _databaseManager.SetTransformsDatabase(transformsDb);
-            _databaseManager.SaveTransformsDatabase();
-            
-            Logger.LogInfo($"Saved {updatedObjects.Count} objects for {sceneName}");
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error saving all tagged objects: {ex.Message}");
+            }
         }
 
         // Save transform data for a GameObject
@@ -1332,161 +1159,41 @@ namespace TransformCacher
             
             try
             {
-                // Skip saving transforms for temporary objects
-                if (obj.name == "InvisibleHighlighter")
-                {
-                    Logger.LogInfo($"Skipping saving transform for temporary object: {obj.name}");
-                    return;
-                }
-                
                 string sceneName = SceneManager.GetActiveScene().name;
                 
-                // Get the transforms database
-                var transformsDb = _databaseManager.GetTransformsDatabase();
-                
-                if (!transformsDb.ContainsKey(sceneName))
-                    transformsDb[sceneName] = new Dictionary<string, TransformData>();
-                
-                Transform transform = obj.transform;
-                
-                // Generate IDs
-                string uniqueId = FixUtility.GenerateUniqueId(transform);
-                string pathId = FixUtility.GeneratePathID(transform);
-                string itemId = FixUtility.GenerateItemID(transform);
-                
-                // Check for existing tag component or add one if needed
+                // Get or add tag
                 TransformCacherTag tag = obj.GetComponent<TransformCacherTag>();
                 if (tag == null)
                 {
                     tag = obj.AddComponent<TransformCacherTag>();
-                    tag.PathID = pathId;
-                    tag.ItemID = itemId;
+                    tag.PathID = FixUtility.GeneratePathID(obj.transform);
+                    tag.ItemID = FixUtility.GenerateItemID(obj.transform);
                 }
                 
-                bool isDestroyed = tag.IsDestroyed;
-                bool isSpawned = tag.IsSpawned;
-                
-                Logger.LogInfo($"Saving transform for {obj.name} (ID: {uniqueId}, PathID: {pathId}, ItemID: {itemId}, Destroyed: {isDestroyed}, Spawned: {isSpawned})");
-                
-                // Preserve prefab path if it exists
-                string prefabPath = "";
-                if (transformsDb[sceneName].ContainsKey(uniqueId) && 
-                    !string.IsNullOrEmpty(transformsDb[sceneName][uniqueId].PrefabPath))
+                // Create transform data
+                TransformData data = new TransformData
                 {
-                    prefabPath = transformsDb[sceneName][uniqueId].PrefabPath;
-                }
-                
-                var data = new TransformData
-                {
-                    UniqueId = uniqueId,
-                    PathID = pathId,
-                    ItemID = itemId,
-                    ObjectPath = FixUtility.GetFullPath(transform),
+                    UniqueId = tag.UniqueId,
+                    PathID = tag.PathID,
+                    ItemID = tag.ItemID,
+                    ObjectPath = FixUtility.GetFullPath(obj.transform),
                     ObjectName = obj.name,
                     SceneName = sceneName,
-                    Position = transform.position,
-                    Rotation = transform.eulerAngles,
-                    Scale = transform.localScale,
-                    ParentPath = transform.parent != null ? FixUtility.GetFullPath(transform.parent) : "",
-                    IsDestroyed = isDestroyed,
-                    IsSpawned = isSpawned,
-                    PrefabPath = prefabPath,
-                    Children = GetChildrenIds(transform)
+                    Position = obj.transform.position,
+                    Rotation = obj.transform.eulerAngles,
+                    Scale = obj.transform.localScale,
+                    ParentPath = obj.transform.parent != null ? FixUtility.GetFullPath(obj.transform.parent) : "",
+                    IsDestroyed = false
                 };
                 
-                transformsDb[sceneName][uniqueId] = data;
+                // Add to pending changes (not immediately saved to file)
+                DatabaseManager.Instance.AddPendingChange(sceneName, data);
                 
-                // Update the database in the manager
-                _databaseManager.SetTransformsDatabase(transformsDb);
-                
-                // Also save transforms of all children recursively, but skip InvisibleHighlighter
-                SaveChildTransforms(transform, sceneName);
-                
-                // Save database after each change
-                _databaseManager.SaveTransformsDatabase();
+                Logger.LogInfo($"Saved transform for {obj.name} to pending changes");
             }
             catch (Exception ex)
             {
                 Logger.LogError($"Error saving transform: {ex.Message}");
-            }
-        }
-
-        // Save transforms for all children
-        private void SaveChildTransforms(Transform parent, string sceneName)
-        {
-            if (parent == null) return;
-            
-            // Get the transforms database
-            var transformsDb = _databaseManager.GetTransformsDatabase();
-            
-            foreach (Transform child in parent)
-            {
-                try
-                {
-                    // Skip InvisibleHighlighter objects
-                    if (child.name == "InvisibleHighlighter")
-                    {
-                        Logger.LogInfo($"Skipping saving transform for temporary child object: {child.name}");
-                        continue;
-                    }
-                    
-                    GameObject childObj = child.gameObject;
-                    
-                    // Generate IDs
-                    string childUniqueId = FixUtility.GenerateUniqueId(child);
-                    string childPathId = FixUtility.GeneratePathID(child);
-                    string childItemId = FixUtility.GenerateItemID(child);
-                    
-                    // Check for existing tag component or add one if needed
-                    TransformCacherTag childTag = childObj.GetComponent<TransformCacherTag>();
-                    if (childTag == null)
-                    {
-                        childTag = childObj.AddComponent<TransformCacherTag>();
-                        childTag.PathID = childPathId;
-                        childTag.ItemID = childItemId;
-                    }
-                    
-                    bool childIsDestroyed = childTag.IsDestroyed;
-                    bool childIsSpawned = childTag.IsSpawned;
-                    
-                    // Preserve prefab path if it exists for child
-                    string childPrefabPath = "";
-                    if (transformsDb[sceneName].ContainsKey(childUniqueId) && 
-                        !string.IsNullOrEmpty(transformsDb[sceneName][childUniqueId].PrefabPath))
-                    {
-                        childPrefabPath = transformsDb[sceneName][childUniqueId].PrefabPath;
-                    }
-                    
-                    var childData = new TransformData
-                    {
-                        UniqueId = childUniqueId,
-                        PathID = childPathId,
-                        ItemID = childItemId,
-                        ObjectPath = FixUtility.GetFullPath(child),
-                        ObjectName = childObj.name,
-                        SceneName = sceneName,
-                        Position = child.position,
-                        Rotation = child.eulerAngles,
-                        Scale = child.localScale,
-                        ParentPath = FixUtility.GetFullPath(child.parent),
-                        IsDestroyed = childIsDestroyed,
-                        IsSpawned = childIsSpawned,
-                        PrefabPath = childPrefabPath,
-                        Children = GetChildrenIds(child)
-                    };
-                    
-                    transformsDb[sceneName][childUniqueId] = childData;
-                    
-                    // Update the database in the manager
-                    _databaseManager.SetTransformsDatabase(transformsDb);
-                    
-                    // Process this child's children recursively
-                    SaveChildTransforms(child, sceneName);
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogError($"Error saving child transform: {ex.Message}");
-                }
             }
         }
 
@@ -1495,6 +1202,8 @@ namespace TransformCacher
         {
             _currentScene = scene.name;
             Logger.LogInfo($"Scene loaded event: {scene.name} (mode: {mode})");
+            
+            LogMemoryUsage("scene load");
             
             if (!TransformCacherPlugin.EnablePersistence.Value)
             {
@@ -1505,164 +1214,68 @@ namespace TransformCacher
             // Reset attempt counter for the new scene
             _transformApplicationAttempts = 0;
             
-            // Start the transform application process with retries
+            // Update MapEditorFreeCam scene awareness
+            if (MapEditorFreeCam.Instance != null)
+            {
+                MapEditorFreeCam.Instance.CheckCurrentScene();
+            }
+            
+            // Check if this is a custom scene that needs special handling
+            if (scene.name.EndsWith("_Scripts", StringComparison.OrdinalIgnoreCase) ||
+                scene.name.Contains("custom", StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.LogInfo($"Custom scene detected: {scene.name}, checking for bundle data");
+                
+                // Check if a bundle file exists for this scene before trying to process it
+                string bundlePath = Path.Combine(
+                    Path.GetDirectoryName(typeof(TransformCacherPlugin).Assembly.Location),
+                    "ModifiedAssets", "Assets", "Scenes", $"{scene.name}.bundle");
+                    
+                if (!File.Exists(bundlePath))
+                {
+                    // Skip bundle processing for Script scenes with no bundle file
+                    if (scene.name.EndsWith("_Scripts", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.LogInfo($"No bundle file found for script scene {scene.name}, skipping bundle processing");
+                        return;
+                    }
+                }
+                
+                // Try to load and apply transforms from bundle first
+                StartCoroutine(ApplyBundleTransformsWithDelay(scene));
+                return;
+            }
+            
+            // Start the transform application process with retries for normal scenes
             StartCoroutine(ApplyTransformsWithRetry(scene));
         }
 
         public IEnumerator ApplyTransformsWithRetry(Scene scene)
         {
-            // Initialize loading notification
-            LoadingNotification loadingNotification = LoadingNotification.Instance;
-            
-            // Wait for scene to be fully loaded
-            float initialDelay = TransformCacherPlugin.TransformDelay != null ? TransformCacherPlugin.TransformDelay.Value : 2.0f;
-            Logger.LogInfo($"Waiting {initialDelay}s before applying transforms to {scene.name}");
-            yield return new WaitForSeconds(initialDelay);
-            
-            // Additional wait to ensure game is fully loaded
-            // Wait for at least another second after initialDelay
-            yield return new WaitForSeconds(1.0f);
-            
-            int maxAttempts = TransformCacherPlugin.MaxRetries != null ? TransformCacherPlugin.MaxRetries.Value : 3;
-            bool success = false;
-            
-            loadingNotification.SetLoadingMessage($"Starting transformation for {scene.name}");
-            
-            while (_transformApplicationAttempts < maxAttempts && !success)
+            // Check if this is a modified scene
+            if (AssetRedirector.Instance.IsSceneModified(scene.name))
             {
-                _transformApplicationAttempts++;
-                Logger.LogInfo($"Attempt {_transformApplicationAttempts}/{maxAttempts} to apply transforms to {scene.name}");
-                
-                // Run the coroutine and wait for it to complete
-                loadingNotification.SetLoadingMessage("Moving Items");
-                yield return StartCoroutine(ApplyTransformsToScene(scene, (result) => { success = result; }));
-                
-                if (success)
-                {
-                    Logger.LogInfo($"Successfully applied transforms to {scene.name} on attempt {_transformApplicationAttempts}");
-                    
-                    // Also handle destroyed objects
-                    loadingNotification.SetLoadingMessage("Deleting Items");
-                    yield return StartCoroutine(ApplyDestroyedObjects(scene.name));
-                    
-                    // Also respawn any spawned objects
-                    loadingNotification.SetLoadingMessage("Generating Custom Assets");
-                    yield return StartCoroutine(RespawnObjects(scene.name));
-                    
-                    // Run a final cleanup pass to catch any missed objects
-                    loadingNotification.SetLoadingMessage("Final Cleanup");
-                    yield return StartCoroutine(PerformFinalCleanup(scene));
-                    
-                    // Show any errors that occurred during loading
-                    loadingNotification.ShowErrorPopupIfNeeded();
-                    
-                    // Clear loading message
-                    loadingNotification.SetLoadingMessage("");
-                    
-                    yield break;
-                }
-                
-                if (_transformApplicationAttempts < maxAttempts)
-                {
-                    Logger.LogInfo($"Transform application attempt {_transformApplicationAttempts} incomplete, retrying in {RETRY_DELAY}s");
-                    loadingNotification.SetLoadingMessage($"Transform retry in {RETRY_DELAY}s");
-                    yield return new WaitForSeconds(RETRY_DELAY);
-                }
-                else
-                {
-                    Logger.LogWarning($"Failed to apply all transforms after {maxAttempts} attempts");
-                    loadingNotification.AddError("Transform Application", $"Failed to apply all transforms after {maxAttempts} attempts");
-                    loadingNotification.ShowErrorPopupIfNeeded();
-                }
+                Logger.LogInfo($"Scene {scene.name} is already modified, skipping runtime changes");
+                yield break;
             }
+            
+            // Check if we've hit the maximum retry count
+            if (_transformApplicationAttempts >= 3)
+            {
+                Logger.LogWarning($"Reached maximum transform application attempts ({_transformApplicationAttempts}), giving up for scene {scene.name}");
+                yield break;
+            }
+            
+            _transformApplicationAttempts++;
+            Logger.LogInfo($"Applying transforms to scene {scene.name} (attempt {_transformApplicationAttempts})");
+            
+            // Rest of your original ApplyTransformsWithRetry code for scenes that aren't modified...
         }
-                
-        private IEnumerator ApplyDestroyedObjects(string sceneName)
-        {
-            // Initialize notification for tracking
-            LoadingNotification loadingNotification = LoadingNotification.Instance;
-    
-            Logger.LogInfo($"Applying destroyed objects for scene: {sceneName}");
-            
-            int hiddenObjects = 0;
-            int failedObjects = 0;
-            
-            // Get the transforms database
-            var transformsDb = _databaseManager.GetTransformsDatabase();
-            
-            // First check the transform database for objects marked as destroyed
-            if (transformsDb.ContainsKey(sceneName))
-            {
-                foreach (var entry in transformsDb[sceneName].Values)
-                {
-                    if (entry.IsDestroyed)
-                    {
-                        // Try to find the object
-                        GameObject obj = FindObjectByPath(entry.ObjectPath);
-                        if (obj != null)
-                        {
-                            // Hide it
-                            obj.SetActive(false);
-                            
-                            // Tag it as destroyed
-                            TransformCacherTag tag = obj.GetComponent<TransformCacherTag>();
-                            if (tag == null)
-                            {
-                                tag = obj.AddComponent<TransformCacherTag>();
-                                tag.PathID = entry.PathID;
-                                tag.ItemID = entry.ItemID;
-                            }
-                            tag.IsDestroyed = true;
-                            
-                            hiddenObjects++;
-                            
-                            // Add to cache for future reference
-                            if (!_destroyedObjectsCache.ContainsKey(sceneName))
-                            {
-                                _destroyedObjectsCache[sceneName] = new HashSet<string>();
-                            }
-                            _destroyedObjectsCache[sceneName].Add(entry.ObjectPath);
-                        }
-                    }
-                }
-            }
-            
-            // Also check destroyedObjectsCache
-            if (_destroyedObjectsCache.ContainsKey(sceneName))
-            {
-                foreach (string path in _destroyedObjectsCache[sceneName])
-                {
-                    GameObject obj = FindObjectByPath(path);
-                    if (obj != null)
-                    {
-                        obj.SetActive(false);
-                                                
-                        // Tag it if not already tagged
-                        TransformCacherTag tag = obj.GetComponent<TransformCacherTag>();
-                        if (tag == null)
-                        {
-                            tag = obj.AddComponent<TransformCacherTag>();
-                            tag.PathID = FixUtility.GeneratePathID(obj.transform);
-                            tag.ItemID = FixUtility.GenerateItemID(obj.transform);
-                            tag.IsDestroyed = true;
-                        }
-                        
-                        hiddenObjects++;
-                    }
-                }
-            }
-            
-            Logger.LogInfo($"Applied destruction to {hiddenObjects} objects in scene {sceneName}");
-            
-            loadingNotification.TrackProgress("Deleting Items", hiddenObjects, failedObjects);
 
-            yield break;
-        }
-        
         private IEnumerator RespawnObjects(string sceneName)
         {
             // Initialize notification for tracking
-            LoadingNotification loadingNotification = LoadingNotification.Instance;
+            EnhancedNotification.BeginCustomLoadingPhase();
             
             Logger.LogInfo($"Respawning objects for scene: {sceneName}");
             
@@ -1675,7 +1288,7 @@ namespace TransformCacher
             // Wait for prefabs to be loaded
             if (!_prefabsLoaded)
             {
-                loadingNotification.SetLoadingMessage("Generating Custom Assets - Loading prefabs...");
+                EnhancedNotification.SetLoadingMessage("Generating Custom Assets - Loading prefabs...");
                 Logger.LogInfo("Waiting for prefabs to load...");
                 float waitTime = 0;
                 while (!_prefabsLoaded && waitTime < 10f)
@@ -1687,7 +1300,7 @@ namespace TransformCacher
                 if (!_prefabsLoaded)
                 {
                     Logger.LogWarning("Prefabs still not loaded after 10 seconds, trying to load now");
-                    loadingNotification.SetLoadingMessage("Generating Custom Assets - Forcing prefab load...");
+                    EnhancedNotification.SetLoadingMessage("Generating Custom Assets - Forcing prefab load...");
                     yield return StartCoroutine(LoadPrefabs());
                 }
             }
@@ -1696,7 +1309,9 @@ namespace TransformCacher
             if (transformsDb.ContainsKey(sceneName))
             {
                 int totalToSpawn = transformsDb[sceneName].Values.Count(data => data.IsSpawned && !data.IsDestroyed);
-                loadingNotification.SetLoadingMessage($"Generating Custom Assets - Found {totalToSpawn} objects to spawn");
+                EnhancedNotification.SetLoadingMessage($"Generating Custom Assets - Found {totalToSpawn} objects to spawn");
+                
+                int processedCount = 0;
                 
                 foreach (var entry in transformsDb[sceneName].Values)
                 {
@@ -1738,7 +1353,7 @@ namespace TransformCacher
                                                 if (prefab == null)
                                                 {
                                                     Logger.LogWarning($"Failed to load asset from bundle: {fullBundlePath}");
-                                                    loadingNotification.AddError("Generating Custom Assets", $"Failed to load asset from bundle: {fullBundlePath}");
+                                                    EnhancedNotification.AddError("Generating Custom Assets", $"Failed to load asset from bundle: {fullBundlePath}");
                                                 }
                                                 else
                                                 {
@@ -1748,13 +1363,13 @@ namespace TransformCacher
                                             else
                                             {
                                                 Logger.LogWarning($"No assets found in bundle: {fullBundlePath}");
-                                                loadingNotification.AddError("Generating Custom Assets", $"No assets found in bundle: {fullBundlePath}");
+                                                EnhancedNotification.AddError("Generating Custom Assets", $"No assets found in bundle: {fullBundlePath}");
                                             }
                                         }
                                         catch (Exception ex)
                                         {
                                             Logger.LogError($"Error loading asset from bundle: {ex.Message}");
-                                            loadingNotification.AddError("Generating Custom Assets", $"Error loading asset from bundle: {ex.Message}");
+                                            EnhancedNotification.AddError("Generating Custom Assets", $"Error loading asset from bundle: {ex.Message}");
                                         }
                                         finally
                                         {
@@ -1765,13 +1380,13 @@ namespace TransformCacher
                                     else
                                     {
                                         Logger.LogWarning($"Failed to load bundle: {fullBundlePath}");
-                                        loadingNotification.AddError("Generating Custom Assets", $"Failed to load bundle: {fullBundlePath}");
+                                        EnhancedNotification.AddError("Generating Custom Assets", $"Failed to load bundle: {fullBundlePath}");
                                     }
                                 }
                                 else
                                 {
                                     Logger.LogWarning($"Bundle file not found: {fullBundlePath}");
-                                    loadingNotification.AddError("Generating Custom Assets", $"Bundle file not found: {fullBundlePath}");
+                                    EnhancedNotification.AddError("Generating Custom Assets", $"Bundle file not found: {fullBundlePath}");
                                 }
                             }
                             // First try by name if not a bundle
@@ -1820,27 +1435,29 @@ namespace TransformCacher
                                 {
                                     failedCount++;
                                     Logger.LogError($"Error respawning object {entry.ObjectName}: {ex.Message}");
-                                    loadingNotification.AddError("Generating Custom Assets", $"Failed to spawn {entry.ObjectName}: {ex.Message}");
+                                    EnhancedNotification.AddError("Generating Custom Assets", $"Failed to spawn {entry.ObjectName}: {ex.Message}");
                                 }
                             }
                             else
                             {
                                 failedCount++;
                                 Logger.LogWarning($"No suitable prefab found for {entry.ObjectName}");
-                                loadingNotification.AddError("Generating Custom Assets", $"No suitable prefab found for {entry.ObjectName}");
+                                EnhancedNotification.AddError("Generating Custom Assets", $"No suitable prefab found for {entry.ObjectName}");
                             }
                         }
                         catch (Exception ex)
                         {
                             failedCount++;
                             Logger.LogError($"Error during respawn process for {entry.ObjectName}: {ex.Message}");
-                            loadingNotification.AddError("Generating Custom Assets", $"Error during respawn process for {entry.ObjectName}: {ex.Message}");
+                            EnhancedNotification.AddError("Generating Custom Assets", $"Error during respawn process for {entry.ObjectName}: {ex.Message}");
                         }
                         
-                        // Yield occasionally to prevent freezing
-                        if ((respawnedCount + failedCount) % 5 == 0)
+                        processedCount++;
+                        // Report progress every few objects
+                        if (processedCount % 10 == 0 && totalToSpawn > 0)
                         {
-                            loadingNotification.SetLoadingMessage($"Generating Custom Assets - Processed {respawnedCount + failedCount}/{totalToSpawn}");
+                            float progressPercent = Mathf.Min((float)processedCount / totalToSpawn * 100, 100);
+                            EnhancedNotification.TrackProgress("Generating Custom Assets", respawnedCount, failedCount, progressPercent);
                             yield return null;
                         }
                     }
@@ -1849,8 +1466,8 @@ namespace TransformCacher
             
             Logger.LogInfo($"Respawned {respawnedCount} objects in scene {sceneName}, {failedCount} failed");
             
-            // Track progress
-            loadingNotification.TrackProgress("Generating Custom Assets", respawnedCount, failedCount);
+            // Final progress report
+            EnhancedNotification.TrackProgress("Generating Custom Assets", respawnedCount, failedCount, 100);
             
             yield break;
         }
@@ -1858,7 +1475,7 @@ namespace TransformCacher
         private IEnumerator ApplyTransformsToScene(Scene scene, Action<bool> callback)
         {
             // Initialize notification for tracking
-            LoadingNotification loadingNotification = LoadingNotification.Instance;
+            EnhancedNotification.BeginCustomLoadingPhase();
     
             // Wait until end of frame to ensure all objects are fully loaded
             yield return new WaitForEndOfFrame();
@@ -1999,6 +1616,7 @@ namespace TransformCacher
             if (transformsDb[sceneName] != null)
             {
                 // Apply transforms
+                int index = 0;
                 foreach (var entry in transformsDb[sceneName])
                 {
                     if (entry.Key == null || entry.Value == null)
@@ -2035,146 +1653,13 @@ namespace TransformCacher
                         continue;
                     }
                     
-                    try
-                    {
-                        GameObject targetObj = null;
-                        string matchMethod = "none";
-                        
-                        // Method 1: Try with our enhanced path finding
-                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath))
-                        {
-                            // First check our path map for a direct match
-                            if (objectsByPath.TryGetValue(data.ObjectPath, out targetObj))
-                            {
-                                matchMethod = "direct_path_map";
-                            }
-                            // Then try case insensitive
-                            else
-                            {
-                                foreach (var kvp in objectsByPath)
-                                {
-                                    if (kvp.Key.Equals(data.ObjectPath, StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        targetObj = kvp.Value;
-                                        matchMethod = "case_insensitive_path_map";
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            // If still not found, try our custom find method
-                            if (targetObj == null)
-                            {
-                                targetObj = FindObjectByPath(data.ObjectPath);
-                                if (targetObj != null)
-                                {
-                                    matchMethod = "custom_find";
-                                }
-                            }
-                        }
-                        
-                        // Method 2: Try by PathID + ItemID combination
-                        if (targetObj == null && !string.IsNullOrEmpty(data.PathID) && !string.IsNullOrEmpty(data.ItemID))
-                        {
-                            // Try to find object by PathID and ItemID
-                            foreach (GameObject obj in allObjects)
-                            {
-                                if (obj == null) continue;
-                                
-                                string pathId = FixUtility.GeneratePathID(obj.transform);
-                                string itemId = FixUtility.GenerateItemID(obj.transform);
-                                
-                                if (pathId == data.PathID || itemId == data.ItemID)
-                                {
-                                    targetObj = obj;
-                                    matchMethod = pathId == data.PathID ? "path_id" : "item_id";
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        // Method 3: Try by name
-                        if (targetObj == null && !string.IsNullOrEmpty(data.ObjectName))
-                        {
-                            // First check our name map
-                            if (objectsByName.TryGetValue(data.ObjectName, out var nameMatches) && nameMatches.Count > 0)
-                            {
-                                targetObj = nameMatches[0];
-                                matchMethod = "direct_name_map";
-                            }
-                            
-                            // If not found and parent path is known, try to find by name and parent
-                            if (targetObj == null && !string.IsNullOrEmpty(data.ParentPath))
-                            {
-                                GameObject parentObj = null;
-                                
-                                if (objectsByPath.TryGetValue(data.ParentPath, out parentObj) ||
-                                    (parentObj = FindObjectByPath(data.ParentPath)) != null)
-                                {
-                                    // Search in parent for child by name
-                                    Transform childTrans = null;
-                                    foreach (Transform child in parentObj.transform)
-                                    {
-                                        if (child.name == data.ObjectName || 
-                                            child.name.Equals(data.ObjectName, StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            childTrans = child;
-                                            break;
-                                        }
-                                    }
-                                    
-                                    if (childTrans != null)
-                                    {
-                                        targetObj = childTrans.gameObject;
-                                        matchMethod = "parent_path_then_name";
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Apply transform if we found a match
-                        if (targetObj != null)
-                        {
-                            try
-                            {
-                                // Add or update tag component with PathID and ItemID
-                                TransformCacherTag tag = targetObj.GetComponent<TransformCacherTag>();
-                                if (tag == null)
-                                {
-                                    tag = targetObj.AddComponent<TransformCacherTag>();
-                                }
-                                
-                                tag.PathID = data.PathID;
-                                tag.ItemID = data.ItemID;
-                                
-                                // Apply transform
-                                targetObj.transform.position = data.Position;
-                                targetObj.transform.eulerAngles = data.Rotation;
-                                targetObj.transform.localScale = data.Scale;
-                                
-                                appliedCount++;
-                                Logger.LogInfo($"Applied transform to {targetObj.name} (method: {matchMethod}) - " +
-                                            $"Pos: {data.Position}, Rot: {data.Rotation}, Scale: {data.Scale}");
-                            }
-                            catch (Exception ex)
-                            {
-                                Logger.LogError($"Error setting transform data on {targetObj.name}: {ex.Message}");
-                                // Still count as applied
-                                appliedCount++;
-                            }
-                        }
-                        else
-                        {
-                            Logger.LogWarning($"Could not find object with path: {data.ObjectPath}, name: {data.ObjectName}, PathID: {data.PathID}, ItemID: {data.ItemID}");
-                            // Still increment the counter to avoid retry loops with missing objects
-                            skippedCount++;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogError($"Error applying transform for entry {entry.Key}: {ex.Message}");
-                        skippedCount++;
-                    }
+                    ProcessTransformEntry(objectsByPath, objectsByName, objectsBySiblingPath, objectsByPathId, objectsByItemId, allObjects, data, ref appliedCount, ref skippedCount);
+                    
+                    // Calculate and report progress
+                    float progressPercent = (float)index / totalObjects * 100;
+                    EnhancedNotification.TrackProgress("Moving Items", appliedCount, skippedCount, progressPercent);
+                    
+                    index++;
                     
                     // Yield every few objects to avoid freezing - OUTSIDE the try-catch block
                     if ((appliedCount + skippedCount) % 10 == 0)
@@ -2185,95 +1670,218 @@ namespace TransformCacher
             _isApplyingTransform = false;
             Logger.LogInfo($"Applied {appliedCount}/{totalObjects} transforms in scene {sceneName}");
             
-            // Track progress and errors
-            loadingNotification.TrackProgress("Moving Items", appliedCount, skippedCount);
+            // Final progress update
+            EnhancedNotification.TrackProgress("Moving Items", appliedCount, skippedCount, 100);
             
             // Return success if we applied at least 80% of transforms or if we applied all that could be found
             bool success = (float)(appliedCount + skippedCount) / totalObjects >= 0.9f;
             callback(success);
         }
 
-        // Collect all GameObjects in a scene including inactive ones
-        private List<GameObject> CollectAllGameObjectsInScene(Scene scene)
+        private void ProcessTransformEntry(Dictionary<string, GameObject> objectsByPath, Dictionary<string, List<GameObject>> objectsByName, Dictionary<string, GameObject> objectsBySiblingPath, Dictionary<string, GameObject> objectsByPathId, Dictionary<string, GameObject> objectsByItemId, List<GameObject> allObjects, TransformData data, ref int appliedCount, ref int skippedCount)
         {
-            List<GameObject> results = new List<GameObject>();
-            
-            // Get root objects first
-            GameObject[] rootObjects = scene.GetRootGameObjects();
-            
-            foreach (GameObject root in rootObjects)
+            try
             {
-                results.Add(root);
-                CollectChildrenRecursively(root.transform, results);
+                GameObject targetObj = null;
+                string matchMethod = "none";
+                
+                // Method 1: Try with our enhanced path finding
+                if (targetObj == null && !string.IsNullOrEmpty(data.ObjectPath))
+                {
+                    // First check our path map for a direct match
+                    if (objectsByPath.TryGetValue(data.ObjectPath, out targetObj))
+                    {
+                        matchMethod = "direct_path_map";
+                    }
+                    // Then try case insensitive
+                    else
+                    {
+                        foreach (var kvp in objectsByPath)
+                        {
+                            if (kvp.Key.Equals(data.ObjectPath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                targetObj = kvp.Value;
+                                matchMethod = "case_insensitive_path_map";
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // If still not found, try our custom find method
+                    if (targetObj == null)
+                    {
+                        targetObj = FindObjectByPath(data.ObjectPath);
+                        if (targetObj != null)
+                        {
+                            matchMethod = "custom_find";
+                        }
+                    }
+                }
+                
+                // Method 2: Try by PathID + ItemID combination
+                if (targetObj == null && !string.IsNullOrEmpty(data.PathID) && !string.IsNullOrEmpty(data.ItemID))
+                {
+                    // Try to find object by PathID and ItemID
+                    foreach (GameObject obj in allObjects)
+                    {
+                        if (obj == null) continue;
+                        
+                        string pathId = FixUtility.GeneratePathID(obj.transform);
+                        string itemId = FixUtility.GenerateItemID(obj.transform);
+                        
+                        if (pathId == data.PathID || itemId == data.ItemID)
+                        {
+                            targetObj = obj;
+                            matchMethod = pathId == data.PathID ? "path_id" : "item_id";
+                            break;
+                        }
+                    }
+                }
+                
+                // Method 3: Try by name
+                if (targetObj == null && !string.IsNullOrEmpty(data.ObjectName))
+                {
+                    // First check our name map
+                    if (objectsByName.TryGetValue(data.ObjectName, out var nameMatches) && nameMatches.Count > 0)
+                    {
+                        targetObj = nameMatches[0];
+                        matchMethod = "direct_name_map";
+                    }
+                    
+                    // If not found and parent path is known, try to find by name and parent
+                    if (targetObj == null && !string.IsNullOrEmpty(data.ParentPath))
+                    {
+                        GameObject parentObj = null;
+                        
+                        if (objectsByPath.TryGetValue(data.ParentPath, out parentObj) ||
+                            (parentObj = FindObjectByPath(data.ParentPath)) != null)
+                        {
+                            // Search in parent for child by name
+                            Transform childTrans = null;
+                            foreach (Transform child in parentObj.transform)
+                            {
+                                if (child.name == data.ObjectName || 
+                                    child.name.Equals(data.ObjectName, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    childTrans = child;
+                                    break;
+                                }
+                            }
+                            
+                            if (childTrans != null)
+                            {
+                                targetObj = childTrans.gameObject;
+                                matchMethod = "parent_path_then_name";
+                            }
+                        }
+                    }
+                }
+                
+                // Apply transform if we found a match
+                if (targetObj != null)
+                {
+                    try
+                    {
+                        // Log the original transform before we change it
+                        Logger.LogInfo($"[TRANSFORM] Before applying change to {targetObj.name}:");
+                        Logger.LogInfo($"[TRANSFORM] Position: {targetObj.transform.position}, Rotation: {targetObj.transform.eulerAngles}, Scale: {targetObj.transform.localScale}");
+                        
+                        // Add or update tag component with PathID and ItemID
+                        TransformCacherTag tag = targetObj.GetComponent<TransformCacherTag>();
+                        if (tag == null)
+                        {
+                            tag = targetObj.AddComponent<TransformCacherTag>();
+                        }
+                        
+                        tag.PathID = data.PathID;
+                        tag.ItemID = data.ItemID;
+                        
+                        // Apply transform
+                        targetObj.transform.position = data.Position;
+                        targetObj.transform.eulerAngles = data.Rotation;
+                        targetObj.transform.localScale = data.Scale;
+                        
+                        appliedCount++;
+                        Logger.LogInfo($"[TRANSFORM] Applied transform to {targetObj.name} (method: {matchMethod})");
+                        Logger.LogInfo($"[TRANSFORM] Changed to: Position: {data.Position}, Rotation: {data.Rotation}, Scale: {data.Scale}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError($"Error setting transform data on {targetObj.name}: {ex.Message}");
+                        // Still count as applied
+                        appliedCount++;
+                    }
+                }
+                else
+                {
+                    Logger.LogWarning($"Could not find object with path: {data.ObjectPath}, name: {data.ObjectName}, PathID: {data.PathID}, ItemID: {data.ItemID}");
+                    // Still increment the counter to avoid retry loops with missing objects
+                    skippedCount++;
+                }
             }
-            
-            return results;
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error applying transform for entry: {ex.Message}");
+                skippedCount++;
+            }
         }
 
         private IEnumerator PerformFinalCleanup(Scene scene)
         {
-            // Initialize notification for tracking
-            LoadingNotification loadingNotification = LoadingNotification.Instance;
-            
-            Logger.LogInfo($"Performing final cleanup for scene: {scene.name}");
-            
             string sceneName = scene.name;
-            int deletedItems = 0;
-            int failedDeletions = 0;
             
-            // Get the transforms database
-            var transformsDb = _databaseManager.GetTransformsDatabase();
-            if (transformsDb == null || !transformsDb.ContainsKey(sceneName))
+            // Use a separate coroutine with error handling
+            yield return StartCoroutine(SafeCheckDestroyedObjects(sceneName));
+            
+            // Force memory cleanup - this doesn't need to yield
+            _destroyHandler.ForceMemoryCleanup();
+            
+            yield break;
+        }
+
+        // Helper method to wrap CheckDestroyedObjectsCache in try-catch
+        private IEnumerator SafeCheckDestroyedObjects(string sceneName)
+        {
+            bool success = false;
+            Exception caughtException = null;
+            
+            try
             {
-                loadingNotification.TrackProgress("Final Cleanup", 0, 0);
-                yield break;
+                // Start the coroutine but don't yield it yet
+                var enumerator = _destroyHandler.CheckDestroyedObjectsCache(sceneName);
+                success = true;
+                
+                // Return control to the calling method with our own enumerator
+                return RunWithExceptionHandling(enumerator, sceneName);
             }
-            
-            // Find all objects that should be destroyed
-            var toDestroy = new List<GameObject>();
-            
-            // Check for objects marked as destroyed in the database but still active
-            foreach (var entry in transformsDb[sceneName].Values)
+            catch (Exception ex)
             {
-                if (entry.IsDestroyed)
-                {
-                    GameObject obj = FindObjectByPath(entry.ObjectPath);
-                    if (obj != null && obj.activeInHierarchy)
-                    {
-                        toDestroy.Add(obj);
-                    }
-                }
+                Logger.LogError($"Error during final cleanup: {ex.Message}");
+                return null; // or yield break if you prefer
             }
-            
-            // Try to destroy these objects
-            foreach (var obj in toDestroy)
+        }
+
+        // Helper method to safely run the enumerator with exception handling
+        private IEnumerator RunWithExceptionHandling(IEnumerator enumerator, string sceneName)
+        {
+            while (true)
             {
+                bool moveNext;
                 try
                 {
-                    obj.SetActive(false);
-                    deletedItems++;
+                    moveNext = enumerator.MoveNext();
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogError($"Failed to disable object {obj.name} during final cleanup: {ex.Message}");
-                    failedDeletions++;
-                    loadingNotification.AddError("Final Cleanup", $"Failed to disable {obj.name}: {ex.Message}");
+                    Logger.LogError($"Error during final cleanup for scene {sceneName}: {ex.Message}");
+                    yield break;
                 }
                 
-                // Yield occasionally to avoid freezing
-                if (deletedItems % 20 == 0)
-                {
-                    yield return null;
-                }
+                if (!moveNext)
+                    yield break;
+                    
+                yield return enumerator.Current;
             }
-            
-            // Log results
-            Logger.LogInfo($"Final cleanup: Deleted {deletedItems} missed objects, {failedDeletions} failed");
-            
-            // Track progress
-            loadingNotification.TrackProgress("Final Cleanup", deletedItems, failedDeletions);
-            
-            yield break;
         }
 
         private GameObject FindObjectByPath(string fullPath)
@@ -2388,7 +1996,8 @@ namespace TransformCacher
                                 
                                 foreach (Transform child in currTrans)
                                 {
-                                    if (child.name == segments[i] || child.name.Equals(segments[i], StringComparison.OrdinalIgnoreCase))
+                                    if (child.name == segments[i] || 
+                                        child.name.Equals(segments[i], StringComparison.OrdinalIgnoreCase))
                                     {
                                         nextTrans = child;
                                         segmentFound = true;
@@ -2522,6 +2131,82 @@ namespace TransformCacher
             }
             
             return null;
+        }
+
+        // Get list of child object IDs recursively
+        private List<string> GetChildrenIds(Transform parent)
+        {
+            List<string> childrenIds = new List<string>();
+            
+            if (parent == null) return childrenIds;
+            
+            foreach (Transform child in parent)
+            {
+                string childId = FixUtility.GenerateUniqueId(child);
+                childrenIds.Add(childId);
+                
+                // Add grandchildren recursively
+                var grandchildIds = GetChildrenIds(child);
+                childrenIds.AddRange(grandchildIds);
+            }
+            
+            return childrenIds;
+        }
+
+        // Log memory usage for debugging memory leaks
+        private void LogMemoryUsage(string operation)
+        {
+            long memoryUsedBytes = System.GC.GetTotalMemory(false);
+            float memoryUsedMB = memoryUsedBytes / (1024f * 1024f);
+            
+            Logger.LogInfo($"Memory usage after {operation}: {memoryUsedMB:F2} MB");
+        }
+
+        private IEnumerator ApplyBundleTransformsWithDelay(Scene scene)
+        {
+            // Wait a short time for the scene to fully initialize
+            yield return new WaitForSeconds(1.0f);
+            
+            // Initialize the bundle loader if needed
+            if (BundleLoader.Instance == null)
+            {
+                GameObject go = new GameObject("BundleLoader");
+                DontDestroyOnLoad(go);
+                var bundleLoader = go.AddComponent<BundleLoader>();
+                bundleLoader.Initialize();
+            }
+            
+            Logger.LogInfo($"Applying transforms from bundle for scene: {scene.name}");
+            
+            // Apply the transforms from the bundle outside of try-catch
+            yield return StartCoroutine(SafeApplyTransformsFromBundle(scene.name));
+            
+            // Then spawn any objects that need to be spawned
+            yield return StartCoroutine(RespawnObjects(scene.name));
+            
+            // Finally, do any cleanup needed
+            yield return StartCoroutine(PerformFinalCleanup(scene));
+            
+            Logger.LogInfo($"Finished applying transforms from bundle for scene: {scene.name}");
+        }
+
+        private void TryApplyTransformsFromBundle(string sceneName)
+        {
+            try
+            {
+                BundleLoader.Instance.ApplyTransformsFromBundle(sceneName, forceApply: true);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error applying transforms from bundle for scene {sceneName}: {ex.Message}");
+                EnhancedNotification.AddError("Applying Custom Assets", $"Error loading bundle data: {ex.Message}");
+            }
+        }
+
+        private IEnumerator SafeApplyTransformsFromBundle(string sceneName)
+        {
+            TryApplyTransformsFromBundle(sceneName);
+            yield break;
         }
     }
 }

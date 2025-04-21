@@ -1,15 +1,9 @@
-### Example Integration
-
-Here’s a simplified example of how you might integrate the `AssetFileUtil` class directly into your project:
-
-1. **Copy the Code**: Copy the `AssetFileUtil` class from the AssetRipper files.
-
-```csharp
 using System;
 using System.IO;
 using System.Security.Cryptography;
+using AssetRipper.IO.Files;
 
-namespace YourProjectNamespace
+namespace TransformCacher.AssetRipperIntegration
 {
     public static class AssetFileUtil
     {
@@ -17,7 +11,7 @@ namespace YourProjectNamespace
         {
             if (!File.Exists(filePath))
                 return false;
-
+                
             try
             {
                 using (FileStream stream = File.OpenRead(filePath))
@@ -32,12 +26,12 @@ namespace YourProjectNamespace
                 return false;
             }
         }
-
+        
         public static bool IsUnityScene(string filePath)
         {
             return Path.GetExtension(filePath).Equals(".unity", StringComparison.OrdinalIgnoreCase);
         }
-
+        
         public static string CalculateFileHash(string filePath)
         {
             using (FileStream stream = File.OpenRead(filePath))
@@ -47,37 +41,57 @@ namespace YourProjectNamespace
                 return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
             }
         }
-
+        
         public static void CopyDirectory(string sourceDir, string destDir, bool overwrite = true)
         {
             // Create the destination directory if it doesn't exist
             Directory.CreateDirectory(destDir);
-
+            
             // Get all files and process them
             foreach (string filePath in Directory.GetFiles(sourceDir))
             {
                 string fileName = Path.GetFileName(filePath);
                 string destFile = Path.Combine(destDir, fileName);
-                if (overwrite || !File.Exists(destFile))
+                File.Copy(filePath, destFile, overwrite);
+            }
+            
+            // Process subdirectories recursively
+            foreach (string subDir in Directory.GetDirectories(sourceDir))
+            {
+                string subDirName = Path.GetFileName(subDir);
+                string destSubDir = Path.Combine(destDir, subDirName);
+                CopyDirectory(subDir, destSubDir, overwrite);
+            }
+        }
+        
+        public static void EnsureDirectoryExists(string path)
+        {
+            if (!Directory.Exists(path))
+            {
+                Directory.CreateDirectory(path);
+            }
+        }
+        
+        public static void BackupFile(string filePath)
+        {
+            if (File.Exists(filePath))
+            {
+                string backupPath = filePath + ".backup";
+                if (!File.Exists(backupPath))
                 {
-                    File.Copy(filePath, destFile, overwrite);
+                    File.Copy(filePath, backupPath);
                 }
             }
         }
+        
+        public static byte[] ReadAllBytes(string filePath)
+        {
+            return File.ReadAllBytes(filePath);
+        }
+        
+        public static void WriteAllBytes(string filePath, byte[] data)
+        {
+            File.WriteAllBytes(filePath, data);
+        }
     }
 }
-```
-
-2. **Remove Library References**: If you were previously using AssetRipper as a library, remove any references to it in your project.
-
-3. **Update Usage**: Wherever you were using the AssetRipper library in your code, update those references to use your integrated `AssetFileUtil` class instead.
-
-4. **Test Your Changes**: Run your project and test the functionality to ensure that everything works as expected.
-
-### Additional Considerations
-
-- **Namespace Conflicts**: Ensure that there are no naming conflicts with existing classes in your project.
-- **Error Handling**: Review the error handling in the copied code and adjust it to fit your project's error handling strategy.
-- **Documentation**: Update any documentation to reflect the changes made during the integration process.
-
-By following these steps, you can effectively integrate the AssetRipper code directly into your project, allowing you to customize and extend its functionality as needed.

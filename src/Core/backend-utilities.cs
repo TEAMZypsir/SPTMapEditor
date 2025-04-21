@@ -168,6 +168,8 @@ namespace TransformCacher
         
         // UI positioning configuration
         public static ConfigEntry<UISideOption> UISide;
+
+        public static ConfigEntry<bool> EnableFreeCamOnStartup;
         
         // Logging
         public static ManualLogSource Log;
@@ -187,48 +189,41 @@ namespace TransformCacher
             // Initialize configuration
             InitializeConfiguration();
             
-            // Initialize dependency loader first
-            DependencyLoader.Initialize();
-            
             try
             {
                 // Initialize components
                 GameObject managerObject = new GameObject("TransformCacherManager");
                 DontDestroyOnLoad(managerObject);
 
-                // Initialize DatabaseManager first as it's needed by other components
-                DatabaseManager databaseManager = DatabaseManager.Instance;
-                if (databaseManager == null)
-                {
-                    Log.LogError("Failed to get database manager instance");
-                }
-                else
-                {
-                    databaseManager.Initialize();
-                    Log.LogInfo("DatabaseManager initialized");
-                }
+                // Initialize DatabaseManager first
+                DatabaseManager databaseManager = managerObject.AddComponent<DatabaseManager>();
+                databaseManager.Initialize();
+                Log.LogInfo("DatabaseManager initialized");
+                
+                // Initialize AssetManager
+                AssetManager assetManager = managerObject.AddComponent<AssetManager>();
+                assetManager.Initialize();
+                Log.LogInfo("AssetManager initialized");
+                
+                // Initialize AssetRedirector
+                AssetRedirector assetRedirector = managerObject.AddComponent<AssetRedirector>();
+                assetRedirector.Initialize();
+                Log.LogInfo("AssetRedirector initialized");
+                
+                // Initialize BundleLoader
+                BundleLoader bundleLoader = managerObject.AddComponent<BundleLoader>();
+                bundleLoader.Initialize();
+                Log.LogInfo("BundleLoader initialized");
 
                 // Add main controller components
                 var transformCacher = managerObject.AddComponent<TransformCacher>();
                 
-                // Add TransformIdBaker
-                var idBaker = managerObject.AddComponent<TransformIdBaker>();
-                if (idBaker != null)
-                {
-                    idBaker.Initialize();
-                    Log.LogInfo("TransformIdBaker initialized");
-                }
-
                 // Add GUI last since it depends on other components
                 var gui = managerObject.AddComponent<TransformCacherGUI>();
-                if (gui != null && transformCacher != null && databaseManager != null)
-                {
-                    gui.Initialize(transformCacher, databaseManager, idBaker);
-                    Log.LogInfo("GUI initialized");
-                }
+                gui.Initialize(transformCacher, databaseManager);
+                Log.LogInfo("GUI initialized");
                 
                 _initialized = true;
-                
                 Log.LogInfo("TransformCacher initialized successfully");
             }
             catch (Exception ex)
@@ -286,6 +281,9 @@ namespace TransformCacher
             
             MaxRetries = Config.Bind("Advanced", "MaxRetries", 3, 
                 "Maximum number of retry attempts for applying transforms");
+
+            EnableFreeCamOnStartup = Config.Bind("FreeCam", "EnableFreeCamOnStartup", false,
+                "Whether to enable free camera automatically on startup");
 
             Log.LogInfo("Configuration initialized");
         }
